@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.7</version>
+    <relativePath/>
+  </parent>
+  <groupId>dev.mars</groupId>
+  <artifactId>java-lab</artifactId>
+  <version>1.0.0</version>
+  <name>Java Lab</name>
+  <description>A local Java notebook workspace</description>
+  <properties>
+    <java.version>17</java.version>
+    <org-json.version>20260814</org-json.version>
+    <commons-io.version>2.20.0</commons-io.version>
+    <commons-codec.version>1.19.0</commons-codec.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>org.jfree</groupId><artifactId>jfreechart</artifactId><version>1.5.6</version></dependency>
+    <dependency><groupId>org.json</groupId><artifactId>json</artifactId><version>${org-json.version}</version></dependency>
+    <dependency><groupId>org.apache.commons</groupId><artifactId>commons-csv</artifactId><version>1.14.1</version></dependency>
+    <dependency>
+      <groupId>org.webjars.npm</groupId><artifactId>echarts</artifactId><version>6.0.0</version>
+      <exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.webjars.npm</groupId><artifactId>gridjs</artifactId><version>6.2.0</version>
+      <exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>
+    </dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <finalName>java-lab</finalName>
+    <plugins>
+      <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId>
+        <executions><execution>
+          <id>bundle-jshell-libraries</id><phase>process-resources</phase><goals><goal>copy-dependencies</goal></goals>
+          <configuration>
+            <includeArtifactIds>jfreechart,json,commons-csv,commons-io,commons-codec</includeArtifactIds><stripVersion>true</stripVersion>
+            <outputDirectory>${project.build.outputDirectory}/kernel-runtime</outputDirectory>
+          </configuration>
+        </execution></executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

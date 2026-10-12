@@ -1,0 +1,11 @@
+.table-output .output-content { max-height: none; padding: 12px 0; overflow: visible; font-family: var(--sans); }
+.grid-output { width: 100%; min-width: 0; margin: 0 auto; }
+.grid-title { margin: 0 0 9px; font: 500 14px/1.5 var(--sans); color: #536174; }
+.grid-table { width: 100%; font: 12px/1.5 var(--sans); }
+.grid-table .gridjs-container { font-size: 12px; color: #536174; }
+.grid-table .gridjs-th, .grid-table .gridjs-td { padding: 9px 12px; border-color: #e4e8ee; }
+.grid-table .gridjs-th { background: #f6f8fa; }
+.grid-table .gridjs-search-input { font-size: 12px; padding: 8px 12px; }
+.grid-table .gridjs-footer { font-size: 11px; box-shadow: none; }
+.grid-table .gridjs-wrapper { box-shadow: none; border-color: #e4e8ee; }
+.table-render-error { color: #af6056; font-size: 12px; padding: 12px; }

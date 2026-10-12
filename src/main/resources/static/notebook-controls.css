@@ -1,0 +1,48 @@
+/* Jupyter-style cell focus and notebook keyboard UI. */
+.cell:focus { outline: none; }
+.command-mode .cell.selected { border-left-color: #638aaf; }
+.command-mode .cell.selected .cell-editor { border-color: #a8bfd4; background: #f7fafc; }
+.cell.marked { background: #f2f6fa80; }
+.cell.editing { border-left-color: #6b9b7b; }
+.cell.editing .cell-editor { border-color: #9abea5; background: #fbfdfb; }
+.cell-outputs.output-scrolled { max-height: 320px; overflow: auto; }
+.show-outputs { margin: 7px 0 0 55px; padding: 6px 12px; border: 1px dashed #d7dfe8; border-radius: 4px; background: #fafbfc; color: #8b97a7; font-size: 10px; }
+.cell.side-by-side { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.cell.side-by-side .cell-outputs { align-self: start; }
+.cell.side-by-side .cell-output { margin-top: 0; }
+.cell.side-by-side .cell-output>.cell-prompt { display: none; }
+.cell.side-by-side .output-content { padding-top: 12px; }
+.cell-editor { position: relative; }
+.cell-editor.with-line-numbers textarea, .cell-editor.with-line-numbers .highlight-layer pre { padding-left: 52px; }
+.line-gutter { position: absolute; z-index: 1; left: 0; top: 0; margin: 0; width: 40px; padding: 11px 8px; border-right: 1px solid #e5eaf0; font: 12px/1.8 var(--mono); text-align: right; color: #aeb8c4; pointer-events: none; user-select: none; }
+#notebook-mode { font-size: 9px; border: 1px solid #dce2e9; border-radius: 4px; padding: 2px 6px; color: #7c8da1; }
+.simple-interface .sidebar, .simple-interface .activity-bar { display: none; }
+#command-palette { width: 540px; padding: 21px; }
+#palette-query { width: 100%; border: 1px solid #d9dfe7; border-radius: 5px; padding: 11px 12px; outline: none; font-size: 12px; }
+#palette-query:focus { border-color: #a7b9cb; }
+#palette-list { margin-top: 10px; max-height: 420px; overflow: auto; }
+.palette-item { display: block; width: 100%; background: none; border: 0; text-align: left; border-radius: 4px; padding: 10px 11px; font-size: 12px; }
+.palette-item.active { background: #eef3f8; color: #517597; }
+.palette-item:hover { background: #f5f7fa; }
+.notebook-search { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; flex-wrap: wrap; gap: 7px; background: #fafbfc; }
+.notebook-search input { width: 240px; max-width: 50%; padding: 7px 9px; border: 1px solid #dfe4eb; border-radius: 4px; outline: none; font-size: 11px; }
+.notebook-search input:focus { border-color: #a7b9cb; }
+.notebook-search .secondary { font-size: 10px; padding: 6px 9px; }
+#search-count { font-size: 10px; color: #96a2af; margin-right: auto; }
+#replace-row { width: 100%; display: flex; gap: 7px; }
+#modal.shortcut-help { width: 800px; }
+.shortcut-groups { max-height: 58vh; overflow: auto; padding-right: 10px; }
+.shortcut-groups h3 { font-size: 11px; letter-spacing: 1px; color: #7990a6; margin: 20px 0 9px; }
+.shortcut-row { gap: 25px; }
+.shortcut-row kbd { text-align: right; flex-shrink: 0; }
+.inspection-tooltip { position: fixed; z-index: 36; max-width: min(650px,90vw); max-height: 300px; overflow: auto; padding: 13px 16px; border: 1px solid #dce3eb; border-radius: 6px; background: #fff; box-shadow: 0 7px 25px #20304820; color: #63768c; font: 11px/1.8 var(--mono); }
+.inspection-tooltip pre { white-space: pre-wrap; font: inherit; margin: 0; }
+@media(max-width:850px) { .cell.side-by-side { display: block; } .shortcut-row { font-size: 10px; gap: 12px; } }
+@media print {
+  body { height: auto; overflow: visible; background: white; }
+  .menubar,.activity-bar,.sidebar,.tabbar,.notebook-toolbar,.statusbar,.cell-actions,.add-cell-bottom,.notebook-hint,.notebook-search,.toast { display: none!important; }
+  .lab,.main,#notebook { display: block; height: auto; }
+  .notebook-scroll { overflow: visible; padding: 10px 20px; }
+  .cell { border-left: 0!important; break-inside: avoid; background: white!important; }
+  .cell-outputs.output-scrolled,.output-content { max-height: none; overflow: visible; }
+}
