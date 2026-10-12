@@ -1,5 +1,10 @@
 # Java Lab
 
+[![Build JAR](https://github.com/software-atelier/java-lab/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/software-atelier/java-lab/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/software-atelier/java-lab?label=release)](https://github.com/software-atelier/java-lab/releases/latest)
+[![Java 17+](https://img.shields.io/badge/Java-17%2B-orange)](#build-and-run)
+[![Download JAR](https://img.shields.io/badge/download-JAR-blue)](https://github.com/software-atelier/java-lab/releases/latest/download/java-lab.jar)
+
 <p align="center">
   <img src="assets/java-lab-mascot.png" alt="Java Lab mascot: a fox with a coffee mug and a code notebook" width="320">
 </p>
