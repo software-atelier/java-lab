@@ -33,7 +33,17 @@
     const settings=document.metadata?.java_lab||{};
     return {variables:Array.isArray(settings.variables)?settings.variables:[],dependencies:Array.isArray(settings.dependencies)?settings.dependencies:[]};
   }
-  if(typeof document==='undefined')return {validate,definitions,installedSettings};
+  function aiContext(document) {
+    const settings=installedSettings(document);
+    const variables=settings.variables.filter(variable=>variable && typeof variable.name==='string')
+      .map(variable=>({name:variable.name,secret:variable.secret===true,
+        ...(typeof variable.env==='string' && variable.env ? {env:variable.env} : {})}));
+    const dependencies=settings.dependencies.filter(dependency=>typeof dependency==='string');
+    if(!variables.length&&!dependencies.length)return null;
+    return {kind:'notebook-settings',title:'Notebook variables and Maven libraries',
+      content:JSON.stringify({variables,dependencies}),metadata:{}};
+  }
+  if(typeof document==='undefined')return {validate,definitions,installedSettings,aiContext};
 
   const dialog=document.querySelector('#settings-dialog');
   const form=document.querySelector('#settings-form');
@@ -151,5 +161,5 @@
   dialog.querySelector('#settings-cancel').onclick=close;
   dialog.querySelector('#settings-close').onclick=close;
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
-  return {open,validate,definitions,installedSettings};
+  return {open,validate,definitions,installedSettings,aiContext};
 });

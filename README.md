@@ -411,6 +411,8 @@ Use a model ID accepted by your provider. Restart the server after changing the 
 
 Requests send the target source, instruction, chosen context, current-cell errors when present, and Java runtime details to the configured AI API. Generating code does not execute it. Cancel dismisses the request and prevents a late response from changing the notebook; the upstream provider may still finish processing it.
 
+Vibecode also receives the current notebook's configured variable names, secret flags, environment-variable bindings, and Maven coordinates, even when preceding-cell context is disabled. It knows to use `labVar("NAME")` or `requireLabVar("NAME")`. Notebook defaults, locally stored values, and resolved environment values are not added to this settings context. As with any AI request, code or notes you explicitly include in the target or optional context are sent to the configured provider.
+
 The default request timeout is 120 seconds and output budget is 32,768 tokens. Optional Spring properties are `lab.ai.timeout`, `lab.ai.max-tokens`, and `lab.ai.api-url`; credentials and model use `lab.ai.api-key` and `lab.ai.model`.
 
 ### Extensible AI context

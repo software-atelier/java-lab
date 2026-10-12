@@ -19,6 +19,10 @@ public class JavaRuntimeContext implements AiContextProvider {
                 + "left to right. Numbers, booleans, arrays and objects can be passed directly; arrays use readable deep formatting. Unmatched placeholders remain '%'; extra arguments "
                 + "are ignored. Replacement text is literal and is not formatted or processed again. Example: log(\"Hello %, total = %\", name, total); "
                 + "log prints one line to the cell's console output. System.out and System.err output and compilation/runtime errors are also displayed. "
-                + "Other third-party Java dependencies are not installed.", Map.of()));
+                + "Notebook settings may declare variables and Maven dependencies. Access a configured variable with labVar(\"NAME\"), which returns null when unset, "
+                + "or requireLabVar(\"NAME\"), which fails clearly when unset. Use these calls for credentials; never print, log, or hard-code their values. "
+                + "A notebook-settings context entry lists only variable names, secret flags, environment-variable bindings, and Maven coordinates; "
+                + "it never includes resolved or local values. Maven dependencies and their transitive libraries are available only in the declaring notebook's kernel. "
+                + "Other third-party Java dependencies are not installed unless declared for this notebook.", Map.of()));
     }
 }

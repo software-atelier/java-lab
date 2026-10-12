@@ -31,6 +31,7 @@ class CodeGenerationServiceTest {
         assertThat(context).contains("log(String msg, Object... args)", "Intermediate results", "last statement", "arrays");
         assertThat(context).contains("Grid.js 6.2.0", "Grid.table()", "pagination(int pageSize)", "application/vnd.gridjs+json");
         assertThat(context).contains("org.json:json 20260814", "Apache Commons CSV 1.14.1", "BOMInputStream", "never parse CSV with String.split");
+        assertThat(context).contains("labVar(\\\"NAME\\\")", "requireLabVar(\\\"NAME\\\")", "Maven dependencies", "never includes resolved or local values");
         String instruction = messages.getValue().get(2).content();
         assertThat(instruction).contains("Use 42", "\"start\":12", "\"end\":13", "int value = 1;");
     }

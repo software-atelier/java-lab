@@ -42,6 +42,8 @@ window.Vibecode = (() => {
 
   function contextFor(current) {
     const context=[];
+    const settings=window.NotebookSettings?.aiContext?.(current.notebook.document);
+    if(settings)context.push(settings);
     if($('#vibe-notebook-context').checked) {
       const index=current.notebook.document.cells.indexOf(current.cell);
       const cells=current.notebook.document.cells.slice(0,index).map((c,i)=>({index:i+1,type:c.cell_type,source:source(c),executionCount:c.execution_count ?? null}));
