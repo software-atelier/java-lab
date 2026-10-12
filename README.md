@@ -55,6 +55,8 @@ For development: `mvn spring-boot:run`. Tests: `mvn test`.
 - **Java completion:** session-aware JShell suggestions for members, classes, imports, variables, and methods. Suggestions appear after a pause in typing; **Ctrl + Space** requests them explicitly. Use arrow keys to select, **Enter** or **Tab** to insert, and **Escape** to dismiss.
 - **Jupyter keyboard controls:** command/edit modes, range selection, cell clipboard, reversible cell operations, heading folding, editor commands, signature inspection, command palette, and notebook source search.
 - **Bundled data libraries:** org.json **20260814** and Apache Commons CSV **1.14.1**, including its Commons IO and Commons Codec dependencies, available directly in notebook kernels and documented in Vibecode context.
+- **Notebook variables and credentials:** define names, optional shareable defaults, and environment-variable bindings per notebook; keep personal values outside the `.jnb` file.
+- **Notebook libraries:** add Maven coordinates to a notebook; Java Lab downloads their transitive runtime dependencies and makes them available only to that notebook's kernel.
 - **Vibecode:** describe an AI edit for a whole Java cell or selected text using any OpenAI-compatible API; OpenRouter is the default. Optional preceding-cell context and additional notes help the model use your notebook definitions. Applied edits autosave and have a cell-level undo action.
 - **Persistent sessions:** variables, methods, classes, and imports carry across cells. Each open notebook gets an independent JShell kernel in a separate JVM.
 - **Outputs:** the result of the last statement is displayed automatically. Intermediate values stay quiet; charts and tables use their rich renderers. `log(...)`, console streams, compilation diagnostics, and runtime errors are also displayed.
@@ -100,6 +102,27 @@ The complete implemented shortcut reference and upstream sources are in **[KEYBO
 | Escape | Dismiss popup or enter command mode |
 
 Cell clipboard and undo/redo are browser-session state, and clipboard cells can be pasted between notebook tabs. Execution shortcuts apply to selected cells in document order. Line numbering, output visibility, scrolling, and layout flags are stored as notebook metadata. Search covers code, Markdown, and raw sources. The native text editor retains normal OS selection/navigation; next-occurrence selection uses a single selection rather than multiple cursors.
+
+## Notebook settings
+
+Open **Notebook settings** from the File menu to configure variables and libraries for the current notebook.
+
+### Variables and credentials
+
+Define a variable name and, optionally, a default value or the name of an environment variable. Read its effective value in a Java cell with `labVar("NAME")`; use `requireLabVar("NAME")` when a missing value should fail clearly. For example:
+
+```java
+String endpoint = requireLabVar("API_URL");
+String token = requireLabVar("API_TOKEN");
+```
+
+The resolution order is **local value → environment variable → notebook default**. Definitions and non-secret defaults are saved in the `.jnb` file; local values are stored separately on this computer in a `.java-lab-values` directory beside the notebook working directory, with owner-only permissions where supported. Mark credentials as secret: they cannot have a notebook default, and their values are never returned by the settings API or included in a notebook download. You can also provide a value through the environment variable named in its definition before starting Java Lab.
+
+**Notebook code is trusted Java code, not a sandbox.** A cell can print a credential or include it in an output that gets saved or exported. Clear sensitive outputs before sharing a notebook; do not put secrets in code cells or defaults.
+
+### Maven libraries
+
+Add dependencies using `groupId:artifactId:version`, for example `org.apache.commons:commons-lang3:3.17.0`. Java Lab downloads the library and its transitive compile/runtime JARs from Maven Central. The dependency list is saved in the notebook; resolved JARs are added only to that notebook's JShell kernel. Applying a library change restarts that kernel, so rerun cells that define variables, methods, classes, or imports.
 
 ## Java execution
 
@@ -465,7 +488,8 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 | POST | `/api/notebooks` | Create; optional `{ "name": "Example.jnb" }` |
 | GET / PUT / DELETE | `/api/notebooks/{name}` | Read / save notebook JSON / delete |
 | PATCH | `/api/notebooks/{name}` | Rename with `{ "name": "New.jnb" }` |
-| POST | `/api/kernels` | Create an independent Java kernel |
+| GET / PUT | `/api/notebooks/{name}/values` | Inspect value sources / set or clear local values without returning their contents |
+| POST | `/api/kernels` | Create an independent Java kernel; pass `{ "notebook": "Example.jnb" }` for its variables and Maven dependencies |
 | POST | `/api/kernels/{id}/execute` | Execute `{ "code": "1 + 1" }` |
 | POST | `/api/kernels/{id}/complete` | Analyze `{ "code": "System.out.pr", "cursor": 13 }`; returns replacement anchor and suggestions |
 | POST | `/api/kernels/{id}/inspect` | Return Java signatures at the cursor without executing code |

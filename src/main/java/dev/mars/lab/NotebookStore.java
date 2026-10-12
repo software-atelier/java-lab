@@ -16,6 +16,7 @@ import java.util.UUID;
 public class NotebookStore {
     private final Path root;
     private final ObjectMapper mapper;
+    private final NotebookValues values;
 
     @org.springframework.beans.factory.annotation.Autowired
     public NotebookStore(ObjectMapper mapper) { this(mapper, Path.of(System.getProperty("user.dir"))); }
@@ -23,7 +24,10 @@ public class NotebookStore {
     NotebookStore(ObjectMapper mapper, Path root) {
         this.mapper = mapper;
         this.root = root.toAbsolutePath().normalize();
+        this.values = new NotebookValues(mapper, this.root);
     }
+
+    public NotebookValues values() { return values; }
 
     public record Entry(String name, long size, long modified) {}
 
@@ -47,6 +51,22 @@ public class NotebookStore {
         if (!(document instanceof ObjectNode notebook)) throw badRequest("Invalid notebook document");
         validate(notebook);
         return notebook;
+    }
+
+    public List<NotebookValues.Source> valueSources(String name) throws IOException {
+        var notebook = read(name);
+        return NotebookValues.sources(NotebookSettings.parse(notebook), values.read(resolve(name)), System.getenv());
+    }
+
+    public void updateValues(String name, java.util.Map<String,String> updates, java.util.List<String> clear) throws IOException {
+        var notebook = read(name);
+        var names = NotebookSettings.parse(notebook).variables().stream().map(NotebookSettings.Variable::name).collect(java.util.stream.Collectors.toSet());
+        values.update(resolve(name), names, updates, clear);
+    }
+
+    public NotebookSettings.Settings settings(String name) throws IOException { return NotebookSettings.parse(read(name)); }
+    public java.util.Map<String,String> effectiveValues(String name) throws IOException {
+        return NotebookValues.effective(settings(name), values.read(resolve(name)), System.getenv());
     }
 
     public synchronized String create(String requested) throws IOException {
@@ -79,6 +99,8 @@ public class NotebookStore {
             try { Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (AtomicMoveNotSupportedException e) { Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING); }
         } finally { Files.deleteIfExists(temporary); }
+        var names = NotebookSettings.parse(document).variables().stream().map(NotebookSettings.Variable::name).collect(java.util.stream.Collectors.toSet());
+        values.retain(path, names);
     }
 
     public synchronized String rename(String name, String newName) throws IOException {
@@ -89,11 +111,14 @@ public class NotebookStore {
         if (source.equals(target)) return newName;
         if (Files.exists(target)) throw new ResponseStatusException(HttpStatus.CONFLICT, "A notebook with that name already exists");
         Files.move(source, target);
+        values.rename(source, target);
         return newName;
     }
 
     public synchronized void delete(String name) throws IOException {
-        if (!Files.deleteIfExists(resolve(name))) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notebook not found");
+        Path path = resolve(name);
+        if (!Files.deleteIfExists(path)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notebook not found");
+        values.delete(path);
     }
 
     private Path resolve(String name) {
@@ -113,6 +138,7 @@ public class NotebookStore {
 
     private void validate(ObjectNode document) {
         if (document.path("nbformat").asInt() != 4 || !document.path("cells").isArray()) throw badRequest("Expected a version 4 notebook with cells");
+        NotebookSettings.parse(document);
         for (var cell : document.path("cells")) {
             String type = cell.path("cell_type").asText();
             if (!List.of("code", "markdown", "raw").contains(type) || !(cell.path("source").isTextual() || cell.path("source").isArray()))

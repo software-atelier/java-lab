@@ -1,0 +1,23 @@
+#settings-dialog{width:min(760px,94vw);max-height:90vh;padding:0;overflow:hidden}
+#settings-form{display:flex;flex-direction:column;max-height:90vh;padding:24px}
+#settings-form .dialog-heading{flex-shrink:0}
+.settings-intro,.settings-restart-note{font-size:12px;line-height:1.6;color:#697382;margin:0 0 12px}
+.settings-intro code,.settings-scroll code{font-family:var(--mono);color:#b96738}
+.settings-scroll{overflow:auto;min-height:0;padding-right:5px}
+.settings-scroll section{border-top:1px solid var(--border);padding:14px 0}
+.settings-scroll h3{font-size:13px;margin:0 0 5px}
+.settings-scroll p{font-size:11px;line-height:1.5;color:var(--muted);margin:0 0 12px}
+.settings-variable{padding:12px;margin-bottom:10px;background:#f9fafb;border:1px solid var(--border);border-radius:7px}
+.settings-variable-top,.settings-variable-fields,.settings-dependency{display:flex;align-items:end;gap:10px;margin-bottom:9px}
+.settings-variable-top label:first-child{flex:1}
+.settings-variable-fields>label{flex:1;min-width:0}
+.settings-variable label{display:flex;flex-direction:column;gap:5px;font-size:10px;color:#6c7685}
+.settings-variable input:not([type="checkbox"]),.settings-gav{width:100%;min-width:0;padding:8px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;color:var(--ink);font-size:11px}
+.settings-variable input:focus,.settings-gav:focus{outline:2px solid #eeb28f;outline-offset:1px}
+.settings-variable .settings-secret,.settings-variable .settings-clear{flex:none;flex-direction:row;align-items:center;gap:5px;padding:0 4px 8px;white-space:nowrap}
+.settings-value-status{font-size:10px;color:#788797}
+.settings-dependency .settings-gav{flex:1;font-family:var(--mono)}
+#settings-error{font-size:11px;color:#a94f40;background:#fff3f1;border-radius:5px;padding:9px;margin-top:10px}
+.settings-restart-note{border-top:1px solid var(--border);padding-top:12px;margin:8px 0 0}
+#settings-form .dialog-actions{margin-top:10px}
+@media(max-width:600px){.settings-variable-fields{display:block}.settings-variable-fields>label{margin-bottom:8px}.settings-variable .settings-clear{padding:0}}

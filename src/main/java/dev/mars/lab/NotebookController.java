@@ -11,10 +11,15 @@ public class NotebookController {
     private final NotebookStore store;
     public NotebookController(NotebookStore store) { this.store = store; }
     public record NameRequest(String name) {}
+    public record ValuesRequest(Map<String,String> values, java.util.List<String> clear) {}
 
     @GetMapping public Map<String, Object> list() throws IOException { return Map.of("directory", store.directory(), "files", store.list()); }
     @PostMapping public Map<String, String> create(@RequestBody(required = false) NameRequest request) throws IOException {
         return Map.of("name", store.create(request == null ? null : request.name()));
+    }
+    @GetMapping("/{name}/values") public Map<String, Object> values(@PathVariable String name) throws IOException { return Map.of("values", store.valueSources(name)); }
+    @PutMapping("/{name}/values") public void values(@PathVariable String name, @RequestBody ValuesRequest request) throws IOException {
+        store.updateValues(name, request.values(), request.clear());
     }
     @GetMapping("/{name}") public ObjectNode read(@PathVariable String name) throws IOException { return store.read(name); }
     @PutMapping("/{name}") public void save(@PathVariable String name, @RequestBody ObjectNode document) throws IOException { store.save(name, document); }

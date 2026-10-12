@@ -15,14 +15,21 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.io.File;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 
 @Service
-public class KernelService {
+public class KernelService implements AutoCloseable {
     private final Map<String, Kernel> kernels = new ConcurrentHashMap<>();
     private final KernelClasspath classpath = new KernelClasspath();
+    private final MavenDependencies dependencies = new MavenDependencies();
+    private final NotebookStore notebooks;
+    public KernelService() { this.notebooks = null; }
+    @org.springframework.beans.factory.annotation.Autowired
+    public KernelService(NotebookStore notebooks) { this.notebooks = notebooks; }
     private final ScheduledExecutorService interrupts=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"java-lab-interrupt");t.setDaemon(true);return t;});
     public record Result(int executionCount, List<Map<String, Object>> outputs, boolean success) {}
     public record Suggestion(String text, boolean matchesType) {}
@@ -32,7 +39,22 @@ public class KernelService {
     public String create() {
         if (kernels.size() >= 32) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many kernels; close unused notebooks");
         String id = UUID.randomUUID().toString();
-        kernels.put(id, new Kernel(classpath.resolve()));
+        kernels.put(id, new Kernel(classpath.resolve(), Map.of(), Set.of()));
+        return id;
+    }
+
+    public String create(String notebook) throws IOException {
+        if (notebook == null || notebook.isBlank()) return create();
+        if (notebooks == null) throw new IllegalStateException("Notebook store unavailable");
+        if (kernels.size() >= 32) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many kernels; close unused notebooks");
+        var settings = notebooks.settings(notebook);
+        var values = notebooks.effectiveValues(notebook);
+        List<Path> jars = dependencies.resolve(settings.dependencies());
+        String cp = classpath.resolve() + jars.stream().map(path -> File.pathSeparator + path).collect(java.util.stream.Collectors.joining());
+        Set<String> secrets = settings.variables().stream().filter(NotebookSettings.Variable::secret).map(v -> values.get(v.name())).filter(v -> v != null && !v.isEmpty()).collect(java.util.stream.Collectors.toSet());
+        Kernel kernel = new Kernel(cp, values, secrets);
+        String id = UUID.randomUUID().toString();
+        kernels.put(id, kernel);
         return id;
     }
 
@@ -139,6 +161,7 @@ public class KernelService {
         final ByteArrayOutputStream stdout = new LimitedOutput();
         final ByteArrayOutputStream stderr = new LimitedOutput();
         final JShell shell;
+        final List<String> secretValues;
         final ExecutorService executor = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "java-lab-kernel"); t.setDaemon(true); return t; });
         final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean();
         volatile long lastUsed = System.currentTimeMillis();
@@ -146,7 +169,8 @@ public class KernelService {
         volatile long generation;
         volatile boolean closed;
 
-        Kernel(String classpath) {
+        Kernel(String classpath, Map<String,String> variables, Set<String> secrets) {
+            secretValues = secrets.stream().sorted(Comparator.comparingInt(String::length).reversed()).toList();
             shell = JShell.builder().out(new PrintStream(stdout, true, StandardCharsets.UTF_8))
                 .err(new PrintStream(stderr, true, StandardCharsets.UTF_8))
                 .remoteVMOptions("-Djava.awt.headless=true").build();
@@ -167,6 +191,15 @@ public class KernelService {
             shell.eval("import org.apache.commons.csv.*;");
             shell.eval("import org.apache.commons.io.input.BOMInputStream;");
             shell.eval("void log(String msg, Object... args) { dev.mars.lab.display.Logs.log(msg, args); }");
+            shell.eval("java.util.Map<String,String> __labVars = new java.util.HashMap<>();");
+            for (var entry : variables.entrySet()) {
+                String name = Base64.getEncoder().encodeToString(entry.getKey().getBytes(StandardCharsets.UTF_8));
+                String value = Base64.getEncoder().encodeToString(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                var init = shell.eval("__labVars.put(new String(java.util.Base64.getDecoder().decode(\"" + name + "\"), java.nio.charset.StandardCharsets.UTF_8), new String(java.util.Base64.getDecoder().decode(\"" + value + "\"), java.nio.charset.StandardCharsets.UTF_8));");
+                if (init.stream().anyMatch(e -> e.status() == Snippet.Status.REJECTED || e.exception() != null)) throw new IllegalStateException("Could not initialize notebook variables");
+            }
+            shell.eval("String labVar(String name) { return __labVars.get(name); }");
+            shell.eval("String requireLabVar(String name) { String value = __labVars.get(name); if (value == null) throw new IllegalArgumentException(\"Missing notebook variable: \" + name); return value; }");
         }
 
         Completions complete(String code, int cursor) {
@@ -246,7 +279,25 @@ public class KernelService {
                 remaining = info.remaining();
             }
             drain(outputs);
-            return new Result(count, outputs, success);
+            return new Result(count, outputs.stream().map(this::redactOutput).toList(), success);
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String,Object> redactOutput(Map<String,Object> output) {
+            return (Map<String,Object>) redact(output);
+        }
+        private Object redact(Object value) {
+            if (value instanceof String text) {
+                for (String secret : secretValues) text = text.replace(secret, "[REDACTED]");
+                return text;
+            }
+            if (value instanceof Map<?,?> map) {
+                Map<String,Object> result = new LinkedHashMap<>();
+                map.forEach((key, val) -> result.put((String) key, redact(val)));
+                return result;
+            }
+            if (value instanceof List<?> list) return list.stream().map(this::redact).toList();
+            return value;
         }
 
         private boolean isDisplayValue(Snippet snippet) {

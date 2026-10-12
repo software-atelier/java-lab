@@ -19,7 +19,12 @@ async function api(path, method = 'GET', body, options = {}) {
 }
 
 function notebookSnapshot(document) {
-  return {...document, cells:document.cells.map(({editing, busy, ...persisted}) => persisted)};
+  const snapshot={...document, cells:document.cells.map(({editing, busy, ...persisted}) => persisted)};
+  // A secret definition may have come from an older document. Never write its default back.
+  if(snapshot.metadata?.java_lab?.variables) snapshot.metadata={...snapshot.metadata,java_lab:{...snapshot.metadata.java_lab,variables:snapshot.metadata.java_lab.variables.map(variable=>{
+    const copy={...variable};if(copy.secret)delete copy.defaultValue;return copy;
+  })}};
+  return snapshot;
 }
 
 function notify(message, error = false) {
@@ -63,10 +68,13 @@ async function openNotebook(name) {
     if (!state.opening.has(name)) {
       state.opening.set(name, (async () => {
         const document = await api('/notebooks/' + encodeURIComponent(name));
-        const kernel = await api('/kernels', 'POST');
+        let kernel=null,kernelError=null;
+        try{kernel=await api('/kernels', 'POST', {notebook:name});}
+        catch(e){kernelError=e;}
         // Preserve notebook metadata and standard output objects on round trip.
-        const opened = {uid:crypto.randomUUID(), name, document, kernel:kernel.id, selected:0, dirty:false, revision:0, running:false, timer:null};
+        const opened = {uid:crypto.randomUUID(), name, document, kernel:kernel?.id||null, configPending:!!kernelError, selected:0, dirty:false, revision:0, running:false, timer:null};
         state.notebooks.push(opened);
+        if(kernelError)notify('Kernel could not start: '+kernelError.message+'. Open Settings to fix libraries or values.',true);
         return opened;
       })());
     }
@@ -87,12 +95,12 @@ function updateStatus() {
   const n = active();
   const marked=n?window.NotebookControls?.indexes(n).length||1:0;
   $('#cell-position').textContent = n ? `Cell ${n.document.cells.length ? n.selected+1 : 0} of ${n.document.cells.length}${marked>1?' · '+marked+' selected':''}` : '';
-  $('#kernel-status').textContent = n ? `Java · ${n.running ? 'Busy' : 'Idle'}` : 'Java · JShell';
-  $('#status-message').textContent = n ? (n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Working directory';
+  $('#kernel-status').textContent = n ? `Java · ${!n.kernel ? 'Not started' : n.running ? 'Busy' : 'Idle'}` : 'Java · JShell';
+  $('#status-message').textContent = n ? (n.configPending ? 'Settings need Apply before running' : n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Working directory';
   $('#save-state').innerHTML = n?.saving ? 'Saving…' : n?.dirty ? 'Unsaved' : icon('check')+' Saved';
   $('#kernel-dot').classList.toggle('busy', !!n?.running);
   $('#cell-type').value = n?.document.cells[n.selected]?.cell_type || 'code';
-  for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running);
+  for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running || n.configPending);
   $$('[data-action="restart"]').forEach(b=>b.disabled=!n);
   $$('[data-action="interrupt"]').forEach(b => b.disabled = !n?.running);
   $$('[data-action="vibecode"]').forEach(b => b.disabled = !n || n.running || n.document.cells[n.selected]?.cell_type !== 'code');
@@ -180,12 +188,14 @@ async function exportHtml() {
   const n = active(); if (!n) return;
   await saveNotebook(n);
   const snapshot = notebookSnapshot(n.document);
+  if(snapshot.metadata?.java_lab?.variables?.length && !await modal('Export HTML with outputs?',
+    'HTML export includes saved cell outputs, including any credentials your code printed. Review outputs before sharing. For a notebook without outputs, use “Download share-safe notebook”.','Export HTML'))return;
   const hasECharts = snapshot.cells.some(c => (c.outputs || []).some(o => !!LabPresentation.echartsHtml(o)));
   const hasGrid=snapshot.cells.some(c=>(c.outputs||[]).some(o=>!!LabPresentation.gridHtml(o)));
   const [chartAssets,tableAssets]=await Promise.all([hasECharts?NotebookCharts.exportAssets():{},hasGrid?NotebookTables.exportAssets():{}]);
   const assets={...chartAssets,...tableAssets};
   downloadFile(n.name.replace(/\.(jnb|ipynb)$/,'')+'.html',LabPresentation.exportHtml(n.name,snapshot,assets),'text/html;charset=utf-8');
-  notify('HTML exported · ready to share or print');
+  notify('HTML exported · review outputs before sharing');
 }
 function selectCell(index, focus = false) {
   const n = active(); if (!n) return;
@@ -213,6 +223,7 @@ async function evaluateCell(n, c) {
 }
 async function runSelected(next = false, insert = false) {
   const n = active(); if (!n || n.running || !n.document.cells.length) return;
+  if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
   const indices=window.NotebookControls?.indexes(n)||[n.selected],index=indices.at(-1),mode=n.controls?.mode||'command';
   const cursor=$(`#cells [data-cell="${n.selected}"] textarea`)?.selectionStart??0;
   n.running = true;n.cancelRun=false;updateStatus(); renderKernels();let success=true;
@@ -225,6 +236,7 @@ async function runSelected(next = false, insert = false) {
 }
 async function runAll() {
   const n = active(); if (!n || n.running) return;
+  if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
   n.running = true; n.cancelRun = false; updateStatus(); renderKernels();
   try { for (const c of n.document.cells) {
     if (n.cancelRun) break;
@@ -238,15 +250,20 @@ async function runAll() {
 }
 async function restartKernel() {
   const n = active(); if (!n) return;
+  if(n.configPending)throw new Error('Apply notebook settings before restarting the kernel.');
   if (!await modal('Restart kernel?', 'All Java variables, imports, and definitions in this session will be reset. Your cells and outputs will remain.', 'Restart')) return;
-  n.cancelRun=true;await api(`/kernels/${n.kernel}`, 'DELETE'); n.kernel = (await api('/kernels','POST')).id;
+  if(n.running)throw new Error('Interrupt execution before restarting the kernel.');
+  if(n.dirty || n.savePromise)await saveNotebook(n);
+  n.cancelRun=true;const replacement=await api('/kernels','POST',{notebook:n.name});
+  const old=n.kernel;n.kernel=replacement.id;n.configPending=false;
+  api(`/kernels/${old}`, 'DELETE').catch(e=>notify('Old kernel cleanup failed: '+e.message,true));
   notify('Kernel restarted · fresh Java session'); updateStatus();
 }
 async function closeNotebook(n) {
   if (!n) return;
   if (n.running) { notify('Interrupt execution before closing the notebook.',true); return; }
   if (n.dirty || n.savePromise) await saveNotebook(n);
-  clearTimeout(n.timer); await api(`/kernels/${n.kernel}`,'DELETE');
+  clearTimeout(n.timer); if(n.kernel)await api(`/kernels/${n.kernel}`,'DELETE');
   window.NotebookControls?.closed(n);
   state.notebooks = state.notebooks.filter(item => item !== n);
   if (state.active === n) { state.active = state.notebooks.at(-1) || null; state.launcher = !state.active; }
@@ -316,13 +333,14 @@ const actions = {
     else sidebar.hidden = !sidebar.hidden;
   },
   save: () => saveNotebook(active(),true), rename: () => renameNotebook(), close: () => closeNotebook(active()),
+  settings: () => window.NotebookSettings?.open(active()),
   run: () => runSelected(), 'run-next': () => runSelected(true), 'run-all':runAll, restart:restartKernel,
   interrupt: async () => {const n=active();if(n?.running){n.cancelRun=true;await api(`/kernels/${n.kernel}/interrupt`,'POST');notify('Interrupt requested');}},
   add: () => insertCell((active()?.selected ?? -1)+1), 'add-end': () => insertCell(active()?.document.cells.length || 0),
   duplicate: () => {const n=active();if(n && !n.running && n.document.cells[n.selected]){const copy=structuredClone(n.document.cells[n.selected]);copy.id=crypto.randomUUID();delete copy.busy;n.document.cells.splice(n.selected+1,0,copy);n.selected++;markDirty(n);renderCells();}},
   'delete-cell': () => {const n=active();if(n && !n.running){n.document.cells.splice(n.selected,1);n.selected=Math.max(0,Math.min(n.selected,n.document.cells.length-1));markDirty(n);renderCells();}},
   clear: () => {const n=active();if(n && !n.running){n.document.cells.forEach(c=>{if(c.cell_type==='code'){c.outputs=[];c.execution_count=null;}});markDirty(n);renderCells();}},
-  download: async () => {const n=active();if(!n)return;await saveNotebook(n);downloadFile(n.name.replace(/\.ipynb$/,'.jnb'),JSON.stringify(notebookSnapshot(n.document),null,2),'application/json');},
+  download: async () => {const n=active();if(!n)return;await saveNotebook(n);const snapshot=notebookSnapshot(n.document);snapshot.cells=snapshot.cells.map(c=>c.cell_type==='code'?{...c,outputs:[],execution_count:null}:c);downloadFile(n.name.replace(/\.ipynb$/,'.jnb'),JSON.stringify(snapshot,null,2),'application/json');notify('Downloaded without cell outputs. Check code and non-secret defaults before sharing.');},
   'export-html': exportHtml,
   vibecode: () => window.Vibecode?.open(),
   help
@@ -373,5 +391,5 @@ $('#file-list').addEventListener('contextmenu',event=>{
   menu.addEventListener('click',event=>{const action=event.target.dataset.context;menu.remove();(action==='rename'?renameNotebook(file.dataset.file):deleteNotebook(file.dataset.file)).catch(e=>notify(e.message,true));});
 });
 window.addEventListener('beforeunload',event=>{if(state.notebooks.some(n=>n.dirty||n.running)){event.preventDefault();event.returnValue='';}});
-window.addEventListener('pagehide',()=>{for(const n of state.notebooks){fetch(`/api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});
+window.addEventListener('pagehide',()=>{for(const n of state.notebooks){if(n.kernel)fetch(`/api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});
 renderWorkspace(); refreshFiles().catch(e=>{$('#connection-state').textContent='Disconnected';notify(e.message,true);});
