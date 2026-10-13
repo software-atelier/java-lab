@@ -17,6 +17,7 @@ import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.transfer.ArtifactNotFoundException;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.supplier.RepositorySystemSupplier;
@@ -35,15 +36,23 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.file.Path;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Resolves compile/runtime JARs using the user's Maven repositories, per notebook kernel. */
 final class MavenDependencies {
     private static final String CENTRAL = "https://repo.maven.apache.org/maven2/";
+    private static final Pattern ENV_REFERENCE = Pattern.compile("\\$\\{env\\.([A-Za-z_][A-Za-z0-9_]*)}");
     private final RepositorySystem system = new RepositorySystemSupplier().get();
     private final Path userSettings;
     private final Path globalSettings;
@@ -63,8 +72,9 @@ final class MavenDependencies {
 
     List<Path> resolve(List<String> coordinates) {
         if (coordinates.isEmpty()) return List.of();
+        Settings settings = null;
         try {
-            Settings settings = loadSettings();
+            settings = loadSettings();
             DefaultRepositorySystemSession session = new DefaultRepositorySystemSession();
             Path local = settings.getLocalRepository() == null || settings.getLocalRepository().isBlank()
                     ? cache : Path.of(settings.getLocalRepository());
@@ -77,10 +87,16 @@ final class MavenDependencies {
             session.setConfigProperty("aether.connector.connectTimeout", 10000);
             session.setConfigProperty("aether.connector.requestTimeout", 30000);
             configureSelectors(session, settings);
+            List<RemoteRepository> resolutionRepositories = system.newResolutionRepositories(session, repositories(settings));
+            Set<String> missingEnv = missingEnvironmentVariables(settings, resolutionRepositories);
+            if (!missingEnv.isEmpty())
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Maven settings reference unset environment variable(s): "
+                                + String.join(", ", missingEnv) + ". Set them before starting Java Lab.");
             session.setReadOnly();
 
             CollectRequest request = new CollectRequest();
-            request.setRepositories(system.newResolutionRepositories(session, repositories(settings)));
+            request.setRepositories(resolutionRepositories);
             for (String coordinate : coordinates)
                 request.addDependency(new Dependency(new DefaultArtifact(coordinate), "compile"));
             DependencyNode root = system.collectDependencies(session, request).getRoot();
@@ -96,11 +112,89 @@ final class MavenDependencies {
             if (bytes > 500_000_000L)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Maven dependencies exceed 500 MB");
             return artifacts.stream().map(a -> a.getFile().toPath()).distinct().toList();
-        } catch (DependencyResolutionException | DependencyCollectionException | SettingsBuildingException
-                 | IllegalArgumentException e) {
+        } catch (DependencyResolutionException | DependencyCollectionException e) {
             // Never include exception text: repository URLs and authentication details may be sensitive.
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not resolve Maven dependencies");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, resolutionFailure(e, settings));
+        } catch (SettingsBuildingException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Could not read Maven settings. Check ~/.m2/settings.xml and its active profiles.");
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Could not resolve Maven dependencies. Check the coordinates and Maven settings.");
         }
+    }
+
+    private static Set<String> missingEnvironmentVariables(Settings settings, List<RemoteRepository> repositories) {
+        Set<String> missing = new LinkedHashSet<>();
+        Set<String> repositoryIds = new HashSet<>();
+        for (RemoteRepository repository : repositories) {
+            repositoryIds.add(repository.getId());
+            findMissingEnv(repository.getUrl(), missing);
+        }
+        // Only credentials belonging to repositories actually used by this resolution matter.
+        for (var server : settings.getServers()) {
+            if (!repositoryIds.contains(server.getId())) continue;
+            findMissingEnv(server.getUsername(), missing);
+            findMissingEnv(server.getPassword(), missing);
+            findMissingEnv(server.getPrivateKey(), missing);
+            findMissingEnv(server.getPassphrase(), missing);
+        }
+        return missing;
+    }
+
+    private static void findMissingEnv(String value, Set<String> missing) {
+        if (value == null) return;
+        var matcher = ENV_REFERENCE.matcher(value);
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (System.getenv(name) == null) missing.add(name);
+        }
+    }
+
+    private static String resolutionFailure(Exception failure, Settings settings) {
+        if (settings != null && settings.isOffline())
+            return "Maven is offline. Disable offline mode in ~/.m2/settings.xml or use cached dependencies.";
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        FailureSignals signals = new FailureSignals();
+        inspectFailure(failure, seen, signals);
+        if (signals.authentication)
+            return "Maven repository authentication failed. Check the matching server ID and credentials in ~/.m2/settings.xml.";
+        if (signals.network)
+            return "Could not connect to a Maven repository. Check the network, proxy, and repository settings.";
+        if (signals.notFound)
+            return "Maven artifact not found. Check the coordinates, active repository profiles, and mirrors.";
+        return "Could not resolve Maven dependencies. Check the coordinates, ~/.m2/settings.xml, and repository access.";
+    }
+
+    private static void inspectFailure(Throwable failure, Set<Throwable> seen, FailureSignals signals) {
+        if (failure == null || !seen.add(failure)) return;
+        if (failure instanceof ArtifactNotFoundException) signals.notFound = true;
+        if (failure instanceof UnknownHostException || failure instanceof ConnectException
+                || failure instanceof SocketTimeoutException) signals.network = true;
+        // Resolver's HTTP transport uses HttpClient 4. Inspect the status, never its message or URL.
+        if ("org.apache.http.client.HttpResponseException".equals(failure.getClass().getName())) {
+            try {
+                int status = (int) failure.getClass().getMethod("getStatusCode").invoke(failure);
+                if (status == 401 || status == 403 || status == 407) signals.authentication = true;
+            } catch (ReflectiveOperationException ignored) {
+                // Unknown transport implementation: retain the generic, redacted diagnostic.
+            }
+        }
+        if (failure instanceof DependencyResolutionException resolution && resolution.getResult() != null) {
+            for (Exception cause : resolution.getResult().getCollectExceptions()) inspectFailure(cause, seen, signals);
+            for (var artifact : resolution.getResult().getArtifactResults())
+                for (Exception cause : artifact.getExceptions()) inspectFailure(cause, seen, signals);
+        }
+        if (failure instanceof DependencyCollectionException collection && collection.getResult() != null)
+            for (Exception cause : collection.getResult().getExceptions()) inspectFailure(cause, seen, signals);
+        for (Throwable suppressed : failure.getSuppressed()) inspectFailure(suppressed, seen, signals);
+        inspectFailure(failure.getCause(), seen, signals);
+    }
+
+    private static final class FailureSignals {
+        private boolean authentication;
+        private boolean network;
+        private boolean notFound;
     }
 
     private Settings loadSettings() throws SettingsBuildingException {

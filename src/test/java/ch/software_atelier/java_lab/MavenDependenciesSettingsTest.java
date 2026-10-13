@@ -16,6 +16,7 @@ import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -152,6 +153,69 @@ class MavenDependenciesSettingsTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageNotContaining(password)
                 .hasMessageNotContaining("fixture-user");
+    }
+
+    @Test void missingEnvironmentVariableInMirrorUrlHasActionableSafeError() throws Exception {
+        String variable = absentEnvironmentVariable();
+        Path settings = writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <mirrors><mirror><id>private-mirror</id><mirrorOf>*</mirrorOf>
+                    <url>https://${env.%s}/repository/</url></mirror></mirrors>
+                </settings>
+                """.formatted(variable));
+
+        assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining(variable)
+                .hasMessageContaining("environment")
+                .hasMessageNotContaining("${env.");
+    }
+
+    @Test void missingEnvironmentVariableInCredentialsHasActionableSafeError() throws Exception {
+        String variable = absentEnvironmentVariable();
+        Path settings = writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <mirrors><mirror><id>private-mirror</id><mirrorOf>*</mirrorOf>
+                    <url>http://127.0.0.1:1/unreachable/</url></mirror></mirrors>
+                  <servers><server><id>private-mirror</id><username>fixture-user</username>
+                    <password>${env.%s}</password></server></servers>
+                </settings>
+                """.formatted(variable));
+
+        assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining(variable)
+                .hasMessageContaining("environment")
+                .hasMessageNotContaining("fixture-user");
+    }
+
+    @Test void unauthorizedMirrorHasActionableSafeErrorWithoutCredentialsOrUrl() throws Exception {
+        String password = "fixture-secret-not-for-errors";
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/repo/", exchange -> {
+            exchange.getResponseHeaders().add("WWW-Authenticate", "Basic realm=fixture");
+            exchange.sendResponseHeaders(401, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            Path settings = mirrorSettings(server.getAddress().getPort(), password);
+            assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .hasMessageContaining("authentication failed")
+                    .hasMessageContaining("server ID")
+                    .hasMessageNotContaining("fixture-user")
+                    .hasMessageNotContaining(password)
+                    .hasMessageNotContaining("127.0.0.1");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static String absentEnvironmentVariable() {
+        String name = "JAVA_LAB_TEST_MISSING_" + UUID.randomUUID().toString().replace("-", "");
+        assertThat(System.getenv(name)).isNull();
+        return name;
     }
 
     private MavenDependencies resolver(Path settings) {
