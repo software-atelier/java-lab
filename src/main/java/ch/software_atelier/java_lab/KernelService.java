@@ -59,14 +59,35 @@ public class KernelService implements AutoCloseable {
     }
 
     public Result execute(String id, String code) {
+        return execute(id, code, null);
+    }
+
+    public Result execute(String id, String code, Map<String, Object> formValues) {
         Kernel kernel = get(id);
         if (code == null || code.length() > 100_000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cell source is missing or too large");
+        String encodedValues = null;
+        if (formValues != null) {
+            if (formValues.size() > 200) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Too many form values");
+            for (var entry : formValues.entrySet()) {
+                if (entry.getKey() == null || !entry.getKey().matches("[A-Za-z][A-Za-z0-9_.-]{0,99}")
+                    || !(entry.getValue() == null || entry.getValue() instanceof String || entry.getValue() instanceof Boolean || entry.getValue() instanceof Number))
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid form value");
+            }
+            try {
+                String json = new ObjectMapper().writeValueAsString(formValues);
+                if (json.length() > 100_000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Form values are too large");
+                encodedValues = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid form values");
+            }
+        }
         synchronized(kernel) {
             if (!kernel.busy.compareAndSet(false, true)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Kernel is already running");
             kernel.generation++;
         }
         kernel.lastUsed = System.currentTimeMillis();
-        Future<Result> task = kernel.executor.submit(() -> kernel.evaluate(code));
+        final String values = encodedValues;
+        Future<Result> task = kernel.executor.submit(() -> kernel.evaluate(code, values));
         try { return task.get(30, TimeUnit.SECONDS); }
         catch (TimeoutException e) {
             kernel.shell.stop();
@@ -187,6 +208,8 @@ public class KernelService implements AutoCloseable {
             shell.eval("import ch.software_atelier.java_lab.display.Charts;");
             shell.eval("import ch.software_atelier.java_lab.display.ECharts;");
             shell.eval("import ch.software_atelier.java_lab.display.Grid;");
+            shell.eval("import ch.software_atelier.java_lab.display.Formatted;");
+            shell.eval("import ch.software_atelier.java_lab.display.Forms;");
             shell.eval("import org.json.*;");
             shell.eval("import org.apache.commons.csv.*;");
             shell.eval("import org.apache.commons.io.input.BOMInputStream;");
@@ -233,10 +256,17 @@ public class KernelService implements AutoCloseable {
             return offset;
         }
 
-        Result evaluate(String code) {
+        Result evaluate(String code, String encodedValues) {
             count++;
             stdout.reset(); stderr.reset();
             List<Map<String, Object>> outputs = new ArrayList<>();
+            if (encodedValues != null) {
+                var sync = shell.eval("ch.software_atelier.java_lab.display.Forms.loadBase64(\"" + encodedValues + "\");");
+                if (sync.stream().anyMatch(event -> event.exception() != null || event.status() == Snippet.Status.REJECTED)) {
+                    outputs.add(error("FormError", "Could not synchronize form values"));
+                    return new Result(count, outputs, false);
+                }
+            }
             String remaining = code;
             boolean success = true;
             while (!remaining.isBlank()) {
@@ -352,6 +382,16 @@ public class KernelService implements AutoCloseable {
                             if (option == null || !option.isObject() || !option.path("columns").isArray() || !option.path("data").isArray())
                                 throw new IOException("Grid.js output requires column and data arrays");
                             value = option;title = option.path("title").asText("Grid.js table");
+                        } else if (mime.equals("application/vnd.java-lab.code+json")) {
+                            var option = JSON.readTree(content);
+                            if (option == null || !option.isObject() || !option.path("format").isTextual() || !option.path("content").isTextual())
+                                throw new IOException("Formatted output requires format and content strings");
+                            value = option;
+                        } else if (mime.equals("application/vnd.java-lab.form+json")) {
+                            var option = JSON.readTree(content);
+                            if (option == null || !option.isObject() || !option.path("id").isTextual() || !option.path("fields").isArray())
+                                throw new IOException("Form output requires id and fields");
+                            value = option;
                         } else throw new IOException("Unsupported display format");
                         outputs.add(Map.of("output_type", "display_data",
                             "data", Map.of(mime, value, "text/plain", title),

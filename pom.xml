@@ -9,7 +9,7 @@
   </parent>
   <groupId>ch.software_atelier</groupId>
   <artifactId>java-lab</artifactId>
-  <version>1.1.8</version>
+  <version>1.2.0</version>
   <name>Java Lab</name>
   <description>A local Java notebook workspace</description>
   <properties>
@@ -21,6 +21,7 @@
   <dependencies>
     <dependency><groupId>org.jfree</groupId><artifactId>jfreechart</artifactId><version>1.5.6</version></dependency>
     <dependency><groupId>org.json</groupId><artifactId>json</artifactId><version>${org-json.version}</version></dependency>
+    <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId><version>2.4</version></dependency>
     <dependency><groupId>org.apache.commons</groupId><artifactId>commons-csv</artifactId><version>1.14.1</version></dependency>
     <dependency>
       <groupId>org.webjars.npm</groupId><artifactId>echarts</artifactId><version>6.0.0</version>
@@ -46,7 +47,7 @@
         <executions><execution>
           <id>bundle-jshell-libraries</id><phase>process-resources</phase><goals><goal>copy-dependencies</goal></goals>
           <configuration>
-            <includeArtifactIds>jfreechart,json,commons-csv,commons-io,commons-codec</includeArtifactIds><stripVersion>true</stripVersion>
+            <includeArtifactIds>jfreechart,json,snakeyaml,commons-csv,commons-io,commons-codec</includeArtifactIds><stripVersion>true</stripVersion>
             <outputDirectory>${project.build.outputDirectory}/kernel-runtime</outputDirectory>
           </configuration>
         </execution></executions>

@@ -26,6 +26,25 @@ function notebookSnapshot(document) {
   })}};
   return snapshot;
 }
+function formValues(n) {
+  return n.document.metadata?.java_lab?.form_values || {};
+}
+function hydrateFormValues(n) {
+  const values={...formValues(n)};
+  let changed=false;
+  for(const c of n.document.cells) for(const output of c.outputs || []) {
+    const form=output.data?.[LabPresentation.formMime];
+    if(!Array.isArray(form?.fields))continue;
+    for(const field of form.fields) if(field && typeof field.id==='string' && !Object.prototype.hasOwnProperty.call(values,field.id)) {
+      values[field.id]=field.value ?? null;changed=true;
+    }
+  }
+  if(changed) {
+    n.document.metadata ||= {};n.document.metadata.java_lab ||= {};
+    n.document.metadata.java_lab.form_values=values;
+    markDirty(n);
+  }
+}
 
 function notify(message, error = false) {
   clearTimeout(toastTimer);
@@ -74,6 +93,7 @@ async function openNotebook(name) {
         // Preserve notebook metadata and standard output objects on round trip.
         const opened = {uid:crypto.randomUUID(), name, document, kernel:kernel?.id||null, configPending:!!kernelError, selected:0, dirty:false, revision:0, running:false, timer:null};
         state.notebooks.push(opened);
+        hydrateFormValues(opened);
         if(kernelError)notify('Kernel could not start: '+kernelError.message+'. Open Settings to fix libraries or values.',true);
         return opened;
       })());
@@ -127,7 +147,11 @@ async function saveNotebook(n = active(), announce = false) {
 function markdown(text) {
   return LabPresentation.markdown(text);
 }
-function outputHtml(output) {
+function outputHtml(output, values = {}) {
+  const form=LabPresentation.formHtml(output,values);
+  if(form)return `<div class="cell-output form-output"><div class="cell-prompt"></div><div class="output-content">${form}</div></div>`;
+  const formatted=LabPresentation.codeHtml(output);
+  if(formatted)return `<div class="cell-output formatted-cell-output"><div class="cell-prompt"></div><div class="output-content">${formatted}</div></div>`;
   const table=LabPresentation.gridHtml(output);
   if(table)return `<div class="cell-output table-output"><div class="cell-prompt"></div><div class="output-content">${table}</div></div>`;
   const interactive = LabPresentation.echartsHtml(output);
@@ -154,7 +178,7 @@ function renderCells() {
       : c.cell_type === 'markdown' ? `<div class="markdown-editor"><div class="markdown-editor-heading"><span>MARKDOWN</span><span>LIVE PREVIEW</span></div><div class="markdown-editor-columns"><div class="cell-editor">${textarea}</div><div class="markdown-render markdown-live" aria-label="Live Markdown preview">${markdown(source(c))}</div></div></div>`
       : c.cell_type === 'code' ? `<div class="cell-editor code-editor"><div class="highlight-layer" aria-hidden="true"><pre>${LabPresentation.highlightJava(source(c))}\n</pre></div>${textarea}</div>`
       : `<div class="cell-editor">${textarea}</div>`;
-    const outputs=(c.outputs||[]).map(outputHtml).join('');
+    const outputs=(c.outputs||[]).map(o=>outputHtml(o,formValues(n))).join('');
     const hidden=!!c.metadata?.jupyter?.outputs_hidden;
     const heading=window.NotebookModel?.heading(c);
     return `<article class="cell ${index === n.selected ? 'selected' : ''}" data-cell="${index}" tabindex="${index===n.selected?0:-1}"><div class="cell-actions">${heading?'<button class="icon-button" data-cell-action="heading" title="Collapse or expand heading">'+(c.metadata.java_lab?.heading_collapsed?'›':'⌄')+'</button>':''}${c.cell_type === 'code' ? `<button class="icon-button vibe-cell-button" data-cell-action="vibecode" title="AI edit this cell or selected text">✦ Vibecode</button>${window.Vibecode?.canUndo(c) ? '<button class="icon-button vibe-cell-button" data-cell-action="undo-ai" title="Undo the last AI edit">Undo AI edit</button>' : ''}` : ''}${c.cell_type === 'markdown' ? `<button class="icon-button preview-toggle" data-cell-action="preview" title="Toggle Markdown editing and preview">${rendered ? 'Edit & preview' : 'Done'}</button>` : ''}<button class="icon-button" data-cell-action="run" title="Run cell">${icon('play')}</button><button class="icon-button" data-cell-action="up" title="Move up">${icon('up')}</button><button class="icon-button" data-cell-action="down" title="Move down">${icon('down')}</button><button class="icon-button" data-cell-action="delete" title="Delete cell">${icon('trash')}</button></div><div class="cell-input-row"><div class="cell-prompt">${c.cell_type === 'code' ? 'In ['+(c.busy ? '*' : c.execution_count ?? ' ')+']:' : ''}</div>${input}</div>${hidden&&outputs?'<button class="show-outputs" data-action="toggle-outputs">Show hidden outputs</button>':''}<div class="cell-outputs ${c.metadata?.scrolled?'output-scrolled':''}" ${hidden?'hidden':''}>${outputs}</div></article>`;
@@ -188,8 +212,8 @@ async function exportHtml() {
   const n = active(); if (!n) return;
   await saveNotebook(n);
   const snapshot = notebookSnapshot(n.document);
-  if(snapshot.metadata?.java_lab?.variables?.length && !await modal('Export HTML with outputs?',
-    'HTML export includes saved cell outputs, including any credentials your code printed. Review outputs before sharing. For a notebook without outputs, use “Download share-safe notebook”.','Export HTML'))return;
+  if((snapshot.metadata?.java_lab?.variables?.length || Object.keys(snapshot.metadata?.java_lab?.form_values || {}).length) && !await modal('Export HTML with outputs?',
+    'HTML export includes saved cell outputs and form values, including anything sensitive you entered or printed. Review them before sharing. For a notebook without outputs and form values, use “Download share-safe notebook”.','Export HTML'))return;
   const hasECharts = snapshot.cells.some(c => (c.outputs || []).some(o => !!LabPresentation.echartsHtml(o)));
   const hasGrid=snapshot.cells.some(c=>(c.outputs||[]).some(o=>!!LabPresentation.gridHtml(o)));
   const [chartAssets,tableAssets]=await Promise.all([hasECharts?NotebookCharts.exportAssets():{},hasGrid?NotebookTables.exportAssets():{}]);
@@ -216,8 +240,10 @@ async function evaluateCell(n, c) {
   c.busy = true; if (active()===n) renderCells();
   try {
     const code=source(c);n.executionHistory ||= [];if(n.executionHistory.at(-1)!==code)n.executionHistory.push(code);if(n.executionHistory.length>100)n.executionHistory.shift();n.historyBrowse=null;
-    const result = await api(`/kernels/${n.kernel}/execute`, 'POST', {code});
-    c.execution_count = result.executionCount; c.outputs = result.outputs; markDirty(n);
+    const values=formValues(n);
+    if(Object.keys(values).length>200 || JSON.stringify(values).length>100000)throw new Error('Too many form values (maximum 200 fields / 100 KB).');
+    const result = await api(`/kernels/${n.kernel}/execute`, 'POST', {code,formValues:values});
+    c.execution_count = result.executionCount; c.outputs = result.outputs; hydrateFormValues(n); markDirty(n);
     return result.success;
   } finally { delete c.busy; if(active()===n) renderCells(); }
 }
@@ -340,7 +366,7 @@ const actions = {
   duplicate: () => {const n=active();if(n && !n.running && n.document.cells[n.selected]){const copy=structuredClone(n.document.cells[n.selected]);copy.id=crypto.randomUUID();delete copy.busy;n.document.cells.splice(n.selected+1,0,copy);n.selected++;markDirty(n);renderCells();}},
   'delete-cell': () => {const n=active();if(n && !n.running){n.document.cells.splice(n.selected,1);n.selected=Math.max(0,Math.min(n.selected,n.document.cells.length-1));markDirty(n);renderCells();}},
   clear: () => {const n=active();if(n && !n.running){n.document.cells.forEach(c=>{if(c.cell_type==='code'){c.outputs=[];c.execution_count=null;}});markDirty(n);renderCells();}},
-  download: async () => {const n=active();if(!n)return;await saveNotebook(n);const snapshot=notebookSnapshot(n.document);snapshot.cells=snapshot.cells.map(c=>c.cell_type==='code'?{...c,outputs:[],execution_count:null}:c);downloadFile(n.name.replace(/\.ipynb$/,'.jnb'),JSON.stringify(snapshot,null,2),'application/json');notify('Downloaded without cell outputs. Check code and non-secret defaults before sharing.');},
+  download: async () => {const n=active();if(!n)return;await saveNotebook(n);const snapshot=notebookSnapshot(n.document);snapshot.cells=snapshot.cells.map(c=>c.cell_type==='code'?{...c,outputs:[],execution_count:null}:c);if(snapshot.metadata?.java_lab){snapshot.metadata={...snapshot.metadata,java_lab:{...snapshot.metadata.java_lab}};delete snapshot.metadata.java_lab.form_values;}downloadFile(n.name.replace(/\.ipynb$/,'.jnb'),JSON.stringify(snapshot,null,2),'application/json');notify('Downloaded without cell outputs or form values. Check code and non-secret defaults before sharing.');},
   'export-html': exportHtml,
   vibecode: () => window.Vibecode?.open(),
   help
@@ -360,6 +386,7 @@ document.addEventListener('click', async event => {
   const panel = target.closest('[data-panel]'); if(panel){const type=panel.dataset.panel;const sidebar=$('#sidebar');sidebar.hidden=false;if(innerWidth<=760)sidebar.classList.toggle('revealed',state.panel!==type||!sidebar.classList.contains('revealed'));state.panel=type;$('#files-panel').hidden=type!=='files';$('#running-panel').hidden=type!=='running';$('#panel-title').textContent=type==='files'?'FILE BROWSER':'RUNNING KERNELS';$$('[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===type));return;}
   const element = target.closest('[data-cell]');
   if(element) {
+    if(target.closest('.lab-form'))return;
     const index=Number(element.dataset.cell);
     if(window.NotebookControls)NotebookControls.clicked(event,index);else selectCell(index);
     const cellAction=target.closest('[data-cell-action]')?.dataset.cellAction;
@@ -380,10 +407,22 @@ document.addEventListener('click', async event => {
   }
 });
 $('#file-search').addEventListener('input',renderFiles);
-$('#cells').addEventListener('input',event=>{if(event.target.matches('textarea')){const n=active();const index=Number(event.target.closest('[data-cell]').dataset.cell);n.document.cells[index].source=[event.target.value];updateEditor(event.target);markDirty(n);}});
+function updateFormControl(control) {
+  const n=active();if(!n)return;
+  const values={...formValues(n)};
+  const value=control.dataset.formType==='checkbox'?control.checked:control.dataset.formType==='number'?(control.value===''?null:Number(control.value)):control.value;
+  if(typeof value==='number'&&!Number.isFinite(value))return;
+  values[control.dataset.formField]=value;
+  if(Object.keys(values).length>200 || JSON.stringify(values).length>100000){notify('Too many form values (maximum 200 fields / 100 KB).',true);renderCells();return;}
+  n.document.metadata ||= {};n.document.metadata.java_lab ||= {};n.document.metadata.java_lab.form_values=values;markDirty(n);
+}
+$('#cells').addEventListener('input',event=>{if(event.target.matches('.cell-editor textarea')){const n=active();const index=Number(event.target.closest('[data-cell]').dataset.cell);n.document.cells[index].source=[event.target.value];updateEditor(event.target);markDirty(n);}
+  const control=event.target.closest('.lab-form [data-form-field]');if(control && !['checkbox','select'].includes(control.dataset.formType))updateFormControl(control);
+});
+$('#cells').addEventListener('change',event=>{const control=event.target.closest('.lab-form [data-form-field]');if(control && ['checkbox','select'].includes(control.dataset.formType))updateFormControl(control);});
 $('#cells').addEventListener('error',event=>{if(event.target.matches?.('img.chart-image')){const message=document.createElement('div');message.className='chart-render-error';message.textContent='Chart image could not be displayed. Rerun this cell to regenerate it.';event.target.replaceWith(message);}},true);
 $('#cells').addEventListener('scroll',event=>{if(event.target.matches('textarea')){const pre=$('.highlight-layer pre',event.target.parentElement);if(pre)pre.style.transform=`translate(${-event.target.scrollLeft}px,${-event.target.scrollTop}px)`;}},true);
-$('#cells').addEventListener('focusin',event=>{const el=event.target.closest('[data-cell]');if(el&&event.target.matches('textarea')){selectCell(Number(el.dataset.cell));window.NotebookControls?.setEditing();}});
+$('#cells').addEventListener('focusin',event=>{const el=event.target.closest('[data-cell]');if(el&&event.target.matches('.cell-editor textarea')){selectCell(Number(el.dataset.cell));window.NotebookControls?.setEditing();}});
 $('#cells').addEventListener('dblclick',event=>{const el=event.target.closest('.markdown-render');if(el){const n=active();n.document.cells[n.selected].editing=true;renderCells();selectCell(n.selected,true);}});
 $('#cell-type').addEventListener('change',event=>{if(window.NotebookControls)NotebookControls.changeType(event.target.value);});
 $('#file-list').addEventListener('contextmenu',event=>{

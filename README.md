@@ -171,6 +171,42 @@ Notebook contents and outputs survive application restarts; **live Java session 
 
 The app binds to `127.0.0.1` by default. Java code executes with your user's local filesystem and process permissions, as in a local REPL.
 
+## Formatted output and forms
+
+Use the pre-imported `Formatted` helper to display code or data with syntax highlighting. The content is treated as text, never executed as HTML or JavaScript. Supported formats are `json`, `yaml` (`yml`), `xml`, `html`, `css`, `javascript` (`js`), `java`, `sql`, `markdown` (`md`), `csv`, and `text`.
+
+```java
+Formatted.prettyJson("{\"name\":\"Ada\",\"active\":true}"); // validates and indents JSON
+Formatted.prettyYaml("person: {name: Ada, active: true}");
+Formatted.prettyXml("<person><name>Ada</name></person>");
+Formatted.show("sql", "select * from people where active = true;");
+```
+
+`Formatted.json`, `.yaml`, `.xml`, and `.code(format, content)` are convenient aliases. `show` preserves whitespace. `prettyJson` validates and indents JSON objects/arrays; `prettyYaml` parses YAML safely and emits indented block-style YAML; `prettyXml` indents XML using a parser that rejects DTDs and external entities. Invalid or unsafe input produces a cell error. YAML reformatting may normalize scalar quoting and discard comments. Each call creates a saved notebook output and appears in offline HTML exports.
+
+Create interactive inputs from Java code with the pre-imported `Forms` helper:
+
+```java
+Forms.form("preferences")
+    .title("Preferences")
+    .text("name", "Name", "Ada")
+    .select("role", "Role", "reader", "admin")
+    .checkbox("enabled", "Enabled", true)
+    .number("threshold", "Threshold", 10)
+    .textarea("notes", "Notes", "")
+    .show();
+```
+
+In a later cell, read the current values:
+
+```java
+log("% (%): %", Forms.text("name"), Forms.text("role"), Forms.bool("enabled"));
+double threshold = Forms.number("threshold");
+Object raw = Forms.value("notes");
+```
+
+Form and field IDs must start with a letter and contain letters, numbers, `_`, `.`, or `-` (maximum 100 characters). Field IDs identify values across the notebook, so use distinct IDs across forms. A rerun of the form cell preserves values already entered. Values are synchronized into the kernel before each later cell executes and are stored with the notebook; as with other Java state, restart/reopen requires rerunning code cells to recreate variables. Exported HTML displays saved form output but cannot execute later Java cells. Limits are 100 fields per form, 200 values per execution request, 100 KB of serialized values, and 16 total rich displays per snippet.
+
 ## JSON and CSV
 
 The executable JAR bundles **`org.json:json:20260814`** and **Apache Commons CSV 1.14.1**, plus Commons IO **2.20.0** and Commons Codec **1.19.0**. The org.json version is the latest published release verified against [Maven Central metadata](https://repo.maven.apache.org/maven2/org/json/json/maven-metadata.xml) on **2026-10-12**. Versions are pinned for reproducible builds.

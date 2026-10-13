@@ -247,7 +247,8 @@ window.NotebookControls = (() => {
   }
   document.addEventListener('keydown',event=>{
     if(event.defaultPrevented||event.isComposing||$$('dialog[open]').length)return;
-    const key=event.key.toLowerCase(),accel=event.ctrlKey||event.metaKey,editor=event.target.matches?.('#cells textarea')?event.target:null,n=active();
+    if(event.target.closest?.('.lab-form'))return;
+    const key=event.key.toLowerCase(),accel=event.ctrlKey||event.metaKey,editor=event.target.matches?.('#cells .cell-editor textarea')?event.target:null,n=active();
     if(sequence&&(accel||event.altKey||event.shiftKey||key!==sequence.key))resetSequence();
     if(event.key==='Escape'&&$('.menu.open')){consume(event);$$('.menu').forEach(menu=>menu.classList.remove('open'));if(n)command(n);return;}
     const file=event.target.closest?.('#file-list [data-file]');

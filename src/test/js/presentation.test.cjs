@@ -112,3 +112,33 @@ test('Grid tables carry escaped local data and offline export embeds both runtim
   assert.doesNotMatch(html,/script src=|<img src=x/);
   assert.equal(context.window.LabPresentation.gridHtml({data:{[mime]:{columns:'invalid',data:[]}}}),'');
 });
+
+test('Formatted code safely highlights JSON and exports without executing source markup', () => {
+  const output={output_type:'display_data',data:{'application/vnd.java-lab.code+json':{format:'json',content:'{"name":"<script>alert(1)</script>","ok":true}'}}};
+  const markup=context.window.LabPresentation.codeHtml(output);
+  assert.match(markup,/formatted-output/);
+  assert.match(markup,/\n  <span class="syntax-string">&quot;name&quot;<\/span>/);
+  assert.match(markup,/&lt;script&gt;/);
+  assert.doesNotMatch(markup,/<script>/);
+  const html=exportHtml('Code.jnb',{cells:[{cell_type:'code',source:'Formatted.json("test");',outputs:[output]}]});
+  assert.match(html,/formatted-output/);
+  assert.doesNotMatch(html,/<script>/);
+});
+
+test('Forms render escaped controls, use persisted values, and export as disabled snapshots', () => {
+  const output={output_type:'display_data',data:{'application/vnd.java-lab.form+json':{id:'prefs',title:'<Preferences>',fields:[
+    {id:'name',label:'Name',type:'text',value:'Ada'},
+    {id:'role',label:'Role',type:'select',value:'reader',options:['reader','admin']},
+    {id:'enabled',label:'Enabled',type:'checkbox',value:false},
+    {id:'note',label:'Note',type:'textarea',value:''}
+  ]}}};
+  const markup=context.window.LabPresentation.formHtml(output,{name:'<img src=x onerror=alert(1)>',role:'admin',enabled:true,note:'<script>'});
+  assert.match(markup,/value="&lt;img src=x onerror=alert\(1\)&gt;"/);
+  assert.match(markup,/value="admin" selected/);
+  assert.match(markup,/type="checkbox"[^>]+checked/);
+  assert.match(markup,/&lt;script&gt;/);
+  assert.doesNotMatch(markup,/<img|<script/);
+  const html=exportHtml('Forms.jnb',{metadata:{java_lab:{form_values:{name:'Grace'}}},cells:[{cell_type:'code',source:'Forms.form("prefs").show();',outputs:[output]}]});
+  assert.match(html,/value="Grace"/);
+  assert.match(html,/data-form-field="name"[^>]+disabled/);
+});

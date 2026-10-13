@@ -121,9 +121,53 @@ window.LabPresentation = (() => {
     return `<section class="grid-output" style="max-width:${width}px"><h3 class="grid-title">${escape(title)}</h3><div class="grid-table" aria-label="${escape(title)}" data-grid="${escape(JSON.stringify(option))}"></div></section>`;
   }
 
+  const codeMime = 'application/vnd.java-lab.code+json';
+  const formMime = 'application/vnd.java-lab.form+json';
+  const codeFormats = new Set(['json','yaml','xml','html','css','javascript','java','sql','markdown','csv','text']);
+  const formTypes = new Set(['text','textarea','number','checkbox','select']);
+  function codeHtml(output) {
+    const payload = output.data?.[codeMime];
+    if (!payload || !codeFormats.has(payload.format) || typeof payload.content !== 'string') return '';
+    let content = payload.content;
+    if (payload.format === 'json') { try { content = JSON.stringify(JSON.parse(content), null, 2); } catch (_) { /* preserve invalid source */ } }
+    const token = payload.format === 'json' ? /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|\b(?:true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g
+      : ['xml','html'].includes(payload.format) ? /<\/?[A-Za-z][^>]*>|<!--[\s\S]*?-->/g
+      : ['yaml','sql','javascript','java','css'].includes(payload.format) ? /#[^\n]*|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b/g : null;
+    let highlighted = '', end = 0;
+    if (token) for (const match of content.matchAll(token)) {
+      highlighted += escape(content.slice(end, match.index));
+      const value = match[0];
+      const kind = value.startsWith('#') || value.startsWith('//') || value.startsWith('<!--') ? 'comment' : /^[-\d]/.test(value) || /^(true|false|null)$/.test(value) ? 'number' : value.startsWith('<') ? 'keyword' : 'string';
+      highlighted += `<span class="syntax-${kind}">${escape(value)}</span>`;
+      end = match.index + value.length;
+    }
+    highlighted += escape(content.slice(end));
+    return `<section class="formatted-output"><div class="formatted-heading">${escape(payload.format.toUpperCase())}</div><pre><code>${highlighted}</code></pre></section>`;
+  }
+  function formHtml(output, values = {}, disabled = false) {
+    const form = output.data?.[formMime];
+    if (!form || typeof form !== 'object' || Array.isArray(form) || typeof form.id !== 'string' || !Array.isArray(form.fields)) return '';
+    const fields = form.fields.map(field => {
+      if (!field || typeof field.id !== 'string' || !formTypes.has(field.type)) return '';
+      const id = escape(field.id), label = escape(field.label ?? field.id);
+      const value = Object.prototype.hasOwnProperty.call(values, field.id) ? values[field.id] : field.value;
+      const attr = `data-form-field="${id}" data-form-type="${field.type}" ${disabled ? 'disabled' : ''}`;
+      let control;
+      if (field.type === 'checkbox') control = `<input type="checkbox" ${attr} ${value === true ? 'checked' : ''}>`;
+      else if (field.type === 'textarea') control = `<textarea ${attr}>${escape(value ?? '')}</textarea>`;
+      else if (field.type === 'select') {
+        if (!Array.isArray(field.options)) return '';
+        control = `<select ${attr}>${field.options.filter(option => typeof option === 'string').map(option => `<option value="${escape(option)}" ${option === value ? 'selected' : ''}>${escape(option)}</option>`).join('')}</select>`;
+      } else control = `<input type="${field.type}" ${attr} value="${escape(value ?? '')}">`;
+      return `<label class="form-field ${field.type === 'checkbox' ? 'form-checkbox' : ''}"><span>${label}</span>${control}</label>`;
+    }).join('');
+    return `<section class="lab-form" aria-label="${escape(form.title ?? form.id)}"><h3>${escape(form.title ?? form.id)}</h3><div class="form-fields">${fields}</div></section>`;
+  }
+
   const syntaxCss = `.syntax-comment{color:#899791;font-style:italic}.syntax-string{color:#428777}.syntax-keyword{color:#9560ad}.syntax-number{color:#b9793c}.syntax-type{color:#417eaa}.syntax-method{color:#ab7146}.syntax-annotation{color:#b89039}.syntax-punctuation{color:#86909f}`;
   const exportCss = `
     .grid-output{width:100%;margin:auto}.grid-title{font-size:15px;font-weight:500;margin:0 0 9px;color:#536174}.grid-table{font-size:12px}.grid-table .gridjs-th,.grid-table .gridjs-td{padding:9px 12px}.table-render-error{color:#af6056;padding:12px}
+    .formatted-output,.lab-form{border:1px solid #e5e9ee;border-radius:7px;background:#f8fafc;overflow:hidden}.formatted-heading{padding:6px 12px;font-size:10px;letter-spacing:1px;color:#75808f;border-bottom:1px solid #e5e9ee}.formatted-output pre{padding:12px;white-space:pre;overflow:auto;margin:0}.lab-form{padding:14px}.lab-form h3{font-size:15px;margin:0 0 12px}.form-fields{display:grid;gap:12px}.form-field{display:grid;gap:4px;font-size:12px}.form-field input,.form-field textarea,.form-field select{font:inherit;padding:7px;border:1px solid #d8dfe8;border-radius:4px;max-width:100%}.form-field textarea{min-height:72px}.form-checkbox{display:flex;align-items:center;gap:9px}.form-checkbox input{order:-1}
     .echarts-chart{width:100%;margin:0 auto;break-inside:avoid}.chart-render-error{color:#ab5c51;padding:15px;font-size:12px}
     .chart-image{display:block;max-width:100%;height:auto;margin:auto;border-radius:5px}.export-output.chart{background:#fff;border:1px solid #e5e9ee;border-radius:8px;padding:12px}
     :root{color-scheme:light;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#2d3748;background:#f5f3ef}
@@ -148,6 +192,10 @@ window.LabPresentation = (() => {
       if (c.cell_type === 'markdown') return `<section class="export-cell prose">${markdown(value)}</section>`;
       const code = c.cell_type === 'code';
       const outputs = (c.outputs || []).map(o => {
+        const formatted=codeHtml(o);
+        if(formatted)return `<div class="export-output">${formatted}</div>`;
+        const form=formHtml(o,document.metadata?.java_lab?.form_values || {},true);
+        if(form)return `<div class="export-output">${form}</div>`;
         const table=gridHtml(o);
         if(table)return `<div class="export-output chart"><div class="output-label">GRID.JS · INTERACTIVE TABLE</div>${table}</div>`;
         const interactive = echartsHtml(o);
@@ -168,5 +216,5 @@ window.LabPresentation = (() => {
     const gridCss=hasGrid?assets.gridCss.replace(/<\/style/gi,'<\\/style'):'';
     return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)} · Java Lab</title><style>${gridCss}${syntaxCss}${exportCss}</style></head><body><main><header class="cover"><div class="brand">JAVA LAB / NOTEBOOK</div><h1>${escape(title)}</h1><div class="subtitle"><span class="pill">Java · JShell</span>${codeCount} code ${codeCount===1 ? 'cell' : 'cells'} · ${escape(date)}</div></header><article class="document">${cells}</article><footer><span>Crafted with Java Lab</span><span>A self-contained notebook · Code, notes & results</span></footer></main>${scripts}</body></html>`;
   }
-  return {highlightJava, markdown, exportHtml, imageHtml, echartsHtml, echartsMime, gridHtml, gridMime, syntaxCss};
+  return {highlightJava, markdown, exportHtml, imageHtml, echartsHtml, echartsMime, gridHtml, gridMime, codeHtml, codeMime, formHtml, formMime, syntaxCss};
 })();

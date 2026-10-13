@@ -16,6 +16,64 @@ class KernelServiceTest {
     final KernelService kernels = new KernelService();
     @AfterEach void close() { kernels.close(); }
 
+    @Test void formattedOutputAndFormValuesWorkAcrossCells() {
+        String id = kernels.create();
+        var formatted = kernels.execute(id, "Formatted.prettyJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"active\\\":true}\");");
+        assertThat(formatted.success()).as(formatted.outputs().toString()).isTrue();
+        assertThat(formatted.outputs()).singleElement().satisfies(output -> {
+            assertThat(output.get("output_type")).isEqualTo("display_data");
+            var data = (Map<?, ?>) output.get("data");
+            var value = (com.fasterxml.jackson.databind.JsonNode) data.get("application/vnd.java-lab.code+json");
+            assertThat(value.path("format").asText()).isEqualTo("json");
+            assertThat(value.path("content").asText()).contains("\n", "Ada");
+        });
+
+        var form = kernels.execute(id, "Forms.form(\"prefs\").title(\"Preferences\").text(\"name\", \"Name\", \"Ada\").select(\"role\", \"Role\", \"reader\", \"admin\").checkbox(\"enabled\", \"Enabled\", true).show();");
+        assertThat(form.success()).as(form.outputs().toString()).isTrue();
+        assertThat(form.outputs()).singleElement().satisfies(output -> {
+            var data = (Map<?, ?>) output.get("data");
+            var value = (com.fasterxml.jackson.databind.JsonNode) data.get("application/vnd.java-lab.form+json");
+            assertThat(value.path("id").asText()).isEqualTo("prefs");
+            assertThat(value.path("fields").size()).isEqualTo(3);
+            assertThat(value.path("fields").get(0).path("value").asText()).isEqualTo("Ada");
+        });
+
+        var later = kernels.execute(id, "log(\"% / % / %\", Forms.text(\"name\"), Forms.text(\"role\"), Forms.bool(\"enabled\"));", Map.of("name", "Grace", "role", "admin", "enabled", false));
+        assertThat(later.success()).as(later.outputs().toString()).isTrue();
+        assertThat(later.outputs()).singleElement().satisfies(o -> assertThat(o.get("text")).isEqualTo("Grace / admin / false\n"));
+        var rerender = kernels.execute(id, "Forms.form(\"prefs\").text(\"name\", \"Name\", \"Ada\").show();", Map.of("name", "Grace", "role", "admin", "enabled", false));
+        var rerenderData = (Map<?, ?>) rerender.outputs().get(0).get("data");
+        var rerenderValue = (com.fasterxml.jackson.databind.JsonNode) rerenderData.get("application/vnd.java-lab.form+json");
+        assertThat(rerenderValue.path("fields").get(0).path("value").asText()).isEqualTo("Grace");
+        String independent = kernels.create();
+        assertThat(kernels.execute(independent, "log(\"%\", Forms.text(\"name\"));").outputs()).singleElement().satisfies(o -> assertThat(o.get("text")).isEqualTo("null\n"));
+        assertThat(kernels.execute(id, "Formatted.prettyJson(\"not json\");").success()).isFalse();
+        assertThat(kernels.execute(id, "Formatted.prettyJson(\"{\\\"ok\\\":true} trailing\");").success()).isFalse();
+        assertThatThrownBy(() -> kernels.execute(id, "1 + 1", Map.of("bad id", "x"))).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test void prettyYamlAndXmlFormatSafelyAndReportInvalidInput() {
+        String id = kernels.create();
+        var yaml = kernels.execute(id, "Formatted.prettyYaml(\"person: {name: Ada, active: true}\");");
+        assertThat(yaml.success()).as(yaml.outputs().toString()).isTrue();
+        var yamlData = (Map<?, ?>) yaml.outputs().get(0).get("data");
+        var yamlValue = (com.fasterxml.jackson.databind.JsonNode) yamlData.get("application/vnd.java-lab.code+json");
+        assertThat(yamlValue.path("format").asText()).isEqualTo("yaml");
+        assertThat(yamlValue.path("content").asText()).contains("person:", "  name: Ada", "  active: true");
+
+        var xml = kernels.execute(id, "Formatted.prettyXml(\"<person><name>Ada</name><active>true</active></person>\");");
+        assertThat(xml.success()).as(xml.outputs().toString()).isTrue();
+        var xmlData = (Map<?, ?>) xml.outputs().get(0).get("data");
+        var xmlValue = (com.fasterxml.jackson.databind.JsonNode) xmlData.get("application/vnd.java-lab.code+json");
+        assertThat(xmlValue.path("format").asText()).isEqualTo("xml");
+        assertThat(xmlValue.path("content").asText()).contains("\n  <name>Ada</name>", "\n  <active>true</active>");
+
+        assertThat(kernels.execute(id, "Formatted.prettyYaml(\"a: [broken\");").success()).isFalse();
+        var unsafe = kernels.execute(id, "Formatted.prettyXml(\"<!DOCTYPE person [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><person>&xxe;</person>\");");
+        assertThat(unsafe.success()).isFalse();
+        assertThat(unsafe.outputs().toString()).doesNotContain("root:");
+    }
+
     @Test void statePersistsAcrossCellsAndKernelsAreIndependent() {
         String first = kernels.create();
         String second = kernels.create();

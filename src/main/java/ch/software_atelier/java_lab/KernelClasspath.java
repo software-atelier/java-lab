@@ -11,14 +11,14 @@ import java.util.stream.Collectors;
 /** Remote JShell needs real filesystem classpath entries, rather than Spring Boot nested URLs. */
 final class KernelClasspath implements AutoCloseable {
     private Path directory;
-    private static final List<String> LIBRARIES=List.of("jfreechart","json","commons-csv","commons-io","commons-codec");
+    private static final List<String> LIBRARIES=List.of("jfreechart","json","snakeyaml","commons-csv","commons-io","commons-codec");
 
     synchronized String resolve() {
         try {
             if (directory == null) {
                 directory = Files.createTempDirectory("java-lab-kernel-");
                 for(String library:LIBRARIES)copy("kernel-runtime/"+library+".jar",directory.resolve(library+".jar"));
-                for (Class<?> helper : new Class<?>[]{ch.software_atelier.java_lab.display.Charts.class, ch.software_atelier.java_lab.display.Display.class, ch.software_atelier.java_lab.display.ECharts.class, ch.software_atelier.java_lab.display.Logs.class}) copyClass(helper);
+                for (Class<?> helper : new Class<?>[]{ch.software_atelier.java_lab.display.Charts.class, ch.software_atelier.java_lab.display.Display.class, ch.software_atelier.java_lab.display.ECharts.class, ch.software_atelier.java_lab.display.Logs.class, ch.software_atelier.java_lab.display.Formatted.class, ch.software_atelier.java_lab.display.Forms.class}) copyClass(helper);
                 copyClass(ch.software_atelier.java_lab.display.Grid.class);
                 copy("ch/software_atelier/java_lab/display/JsonOptions.class", directory.resolve("classes/ch/software_atelier/java_lab/display/JsonOptions.class"));
             }
