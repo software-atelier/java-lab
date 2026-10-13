@@ -138,7 +138,7 @@ function outputHtml(output) {
   const text = value => Array.isArray(value) ? value.join('') : value ?? '';
   const error = output.output_type === 'error';
   const value = error ? (output.traceback || [`${output.ename}: ${output.evalue}`]).join('\n') : output.output_type === 'stream' ? text(output.text) : text(output.data?.['text/plain']);
-  return `<div class="cell-output ${error ? 'error' : output.name === 'stderr' ? 'stderr' : ''}"><div class="cell-prompt">${output.output_type === 'execute_result' ? 'Out ['+(output.execution_count ?? ' ')+']:' : ''}</div><div class="output-content"><pre>${escapeHtml(value)}</pre></div></div>`;
+  return `<div class="cell-output ${error ? 'error' : output.name === 'stderr' ? 'stderr' : ''}"><div class="cell-prompt">${output.output_type === 'execute_result' ? 'Out ['+(output.execution_count ?? ' ')+']:' : ''}</div><div class="output-content"><pre>${escapeHtml(value)}</pre>${error ? '<button type="button" class="fix-error-button" data-cell-action="fix-error" aria-label="Fix this cell error with AI" title="Fix this cell error with AI">✦ Fix with AI</button>' : ''}</div></div>`;
 }
 function renderCells() {
   const focused=document.activeElement,hadFocus=$('#cells').contains(focused),wasEditor=focused?.matches?.('textarea');
@@ -366,6 +366,7 @@ document.addEventListener('click', async event => {
     if(cellAction) {
       const n=active();
       if(cellAction==='vibecode')dispatch('vibecode');
+      else if(cellAction==='fix-error')window.Vibecode?.fixError();
       else if(cellAction==='undo-ai')window.Vibecode?.undo();
       else if(cellAction==='run')dispatch('run');
       else if(cellAction==='delete')dispatch('delete-cell');

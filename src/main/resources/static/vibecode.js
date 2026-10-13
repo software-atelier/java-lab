@@ -4,6 +4,7 @@ window.Vibecode = (() => {
   const history = new WeakMap();
   const MAX_OUTPUT_CHARS = 12000;
   const MAX_NOTEBOOK_OUTPUT_CHARS = 64000;
+  const FIX_ERROR_PROMPT = 'Fix the execution error in this Java cell. Use the current cell diagnostics and preceding notebook context to identify the cause. Return the complete corrected cell. Preserve the intended behavior and change only what is needed.';
   let edit = null, controller = null, generation = 0;
 
   function close() {
@@ -18,19 +19,21 @@ window.Vibecode = (() => {
     $('#vibe-notebook-context').disabled=value;
     $('#vibe-generate').textContent=value?'Generating…':'Generate & apply';
   }
-  async function open() {
+  async function open(fixError = false) {
     const n=active(), c=n?.document.cells[n.selected];
-    if(!c || c.cell_type!=='code' || n.running)return;
+    if(!c || c.cell_type!=='code' || n.running || dialog.open)return;
+    if(fixError && !(c.outputs||[]).some(o=>o.output_type==='error'))return;
     const editor=$(`#cells [data-cell="${n.selected}"] textarea`);
-    const selected=editor && editor.selectionEnd>editor.selectionStart;
-    edit={notebook:n,cell:c,original:source(c),start:selected?editor.selectionStart:null,end:selected?editor.selectionEnd:null};
+    const selected=!fixError && editor && editor.selectionEnd>editor.selectionStart;
+    edit={notebook:n,cell:c,original:source(c),start:selected?editor.selectionStart:null,end:selected?editor.selectionEnd:null,errorOutputs:fixError?c.outputs:null};
     const version=++generation;
     const text=selected?edit.original.slice(edit.start,edit.end):edit.original;
-    $('#vibe-target-label').textContent=selected?'REPLACE SELECTED CODE':'REPLACE CELL';
+    $('#vibe-target-label').textContent=fixError?'FIX FAILED CELL':selected?'REPLACE SELECTED CODE':'REPLACE CELL';
     $('#vibe-target-code').innerHTML=text?LabPresentation.highlightJava(text):'<span class="syntax-comment">// A fresh canvas</span>';
     $('#vibe-context-count').textContent=`(${n.selected})`;
-    $('#vibe-prompt').value='';$('#vibe-context-notes').value='';$('#vibe-error').hidden=true;
+    $('#vibe-prompt').value=fixError?FIX_ERROR_PROMPT:'';$('#vibe-context-notes').value='';$('#vibe-error').hidden=true;
     $('#vibe-model').textContent='AI · loading configuration…';loading(false);
+    $('#vibe-generate').disabled=true;
     window.JavaEditor?.dismiss();dialog.showModal();$('#vibe-prompt').focus();
     try {
       const configuration=await api('/ai/config');
@@ -39,6 +42,7 @@ window.Vibecode = (() => {
       $('#vibe-model').textContent=configuration.model?`${provider} · ${configuration.model}`:`${provider} · not configured`;
       $('#vibe-generate').disabled=!configuration.configured;
       if(!configuration.configured)error('Set AI_MODEL and AI_API_KEY if your API requires authentication, then restart Java Lab. OpenRouter requires an API key; AI_API_URL selects another compatible API.');
+      else if(fixError)await generate();
     }catch(e){if(version===generation){error(e.message);$('#vibe-generate').disabled=true;}}
   }
 
@@ -124,9 +128,10 @@ window.Vibecode = (() => {
   }
 
   async function generate(event) {
-    event.preventDefault();if(!edit || controller)return;
+    event?.preventDefault();if(!edit || controller)return;
     const current=edit;
     const prompt=$('#vibe-prompt').value.trim();if(!prompt)return;
+    if(!state.notebooks.includes(current.notebook)||!current.notebook.document.cells.includes(current.cell)||current.cell.cell_type!=='code'||source(current.cell)!==current.original||current.notebook.running||(current.errorOutputs && current.cell.outputs!==current.errorOutputs)){error('The target cell changed before generating. Your current code was kept; request the edit again.');return;}
     let context;
     try{context=contextFor(current);}catch(e){error(e.message);return;}
     const request={prompt,target:{source:current.original,start:current.start,end:current.end},context};
@@ -135,7 +140,7 @@ window.Vibecode = (() => {
       const result=await api('/ai/generate','POST',request,{signal:controller.signal});
       if(version!==generation)return;
       const {notebook:n,cell:c,original,start,end}=current;
-      if(!state.notebooks.includes(n)||!n.document.cells.includes(c)||c.cell_type!=='code'||source(c)!==original||n.running)
+      if(!state.notebooks.includes(n)||!n.document.cells.includes(c)||c.cell_type!=='code'||source(c)!==original||n.running||(current.errorOutputs && c.outputs!==current.errorOutputs))
         throw new Error('The target cell changed while generating. Your current code was kept; request the edit again.');
       if(typeof result.code!=='string'||!result.code.trim())throw new Error('The model returned no code.');
       const replacement=start===null?result.code:original.slice(0,start)+result.code+original.slice(end);
@@ -160,5 +165,5 @@ window.Vibecode = (() => {
   $('#vibe-form').addEventListener('submit',generate);
   $('#vibe-close').onclick=$('#vibe-cancel').onclick=close;
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
-  return {open,canUndo,undo};
+  return {open,fixError:()=>open(true),canUndo,undo};
 })();
