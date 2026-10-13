@@ -405,11 +405,11 @@ Use a model ID accepted by your provider. Restart the server after changing the 
 
 1. Select a Java cell, optionally selecting the exact code section to replace.
 2. Click **✦ Vibecode** on the toolbar or the cell's action bar.
-3. Describe the change. **Include preceding notebook cells** is enabled by default; deselect it for a cell-only request. Expand **Additional context** for requirements, sample data, or API notes.
+3. Describe the change. **Include preceding cells and outputs** is enabled by default; deselect it for a cell-only request. Textual results from earlier runs can help Vibecode use discovered table schemas and other data. Expand **Additional context** for requirements, sample data, or API notes.
 4. Click **Generate & apply**. Generated code replaces the cell or selected range, clears that cell's stale outputs, and autosaves. Run it using the normal execution controls.
 5. **Undo AI edit** on the cell restores the prior source and outputs. Undo is session-local and avoids overwriting subsequent manual code changes.
 
-Requests send the target source, instruction, chosen context, current-cell errors when present, and Java runtime details to the configured AI API. Generating code does not execute it. Cancel dismisses the request and prevents a late response from changing the notebook; the upstream provider may still finish processing it.
+Requests send the target source, instruction, chosen context, current-cell errors when present, and Java runtime details to the configured AI API. With preceding cells enabled, their saved textual outputs are also sent; binary images and large chart payloads are excluded. Outputs may contain sensitive data, so clear them or turn off this option before generating when needed. Generating code does not execute it. Cancel dismisses the request and prevents a late response from changing the notebook; the upstream provider may still finish processing it.
 
 Vibecode also receives the current notebook's configured variable names, secret flags, environment-variable bindings, and Maven coordinates, even when preceding-cell context is disabled. It knows to use `labVar("NAME")` or `requireLabVar("NAME")`. Notebook defaults, locally stored values, and resolved environment values are not added to this settings context. As with any AI request, code or notes you explicitly include in the target or optional context are sent to the configured provider.
 
@@ -433,10 +433,10 @@ The API separates the instruction, edit target, and context:
 
 - **`AiContextProvider`** is a Spring extension point: additional beans can supply workspace files, kernel facts, documentation, retrieved references, or other context. `JavaRuntimeContext` supplies runtime details; `ChartContext`, `EChartsContext`, and `GridContext` supply the bundled visualization wrappers and their display APIs.
 - **`ContextItem`** contains `kind`, `title`, `content`, and arbitrary JSON `metadata`; the browser already uses notebook, notes, and diagnostics entries.
-- **`CodeGenerationService`** validates input and composes provider-neutral messages. It accepts up to 32 client context entries and a combined 200,000-character context budget.
+- **`CodeGenerationService`** validates input and composes provider-neutral messages. It accepts up to 32 client context entries and a combined 128,000-character serialized context budget, including built-in context entries.
 - **`CodeGenerationProvider`** isolates the model transport. `OpenAiCompatibleProvider` implements the standard OpenAI-compatible API transport; future providers can use the same edit and context contracts.
 
-Instructions are limited to 10,000 characters and cell sources/replacements to 100,000 characters. Provider errors are displayed inline, preserving the original cell. The application does not silently truncate context or apply truncated model responses.
+Instructions are limited to 10,000 characters and cell sources/replacements to 100,000 characters. Textual outputs are capped at 12,000 characters each and 64,000 characters in total, with recent outputs preferred and truncation reported in context metadata. Other oversized context is rejected with a visible error; model responses are never silently truncated before application. Provider errors are displayed inline, preserving the original cell.
 
 ## Notebook format
 

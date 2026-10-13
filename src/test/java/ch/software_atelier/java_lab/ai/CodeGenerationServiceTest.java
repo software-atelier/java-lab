@@ -41,9 +41,25 @@ class CodeGenerationServiceTest {
         for (var target : List.of(new CodeGeneration.Target("abc", -1, 2), new CodeGeneration.Target("abc", 2, 4), new CodeGeneration.Target("abc", 2, 2), new CodeGeneration.Target("abc", null, 2))) {
             assertThatThrownBy(() -> service.generate(new CodeGeneration.Request("Edit", target, null))).isInstanceOf(ResponseStatusException.class);
         }
-        var largeContext = List.of(new CodeGeneration.ContextItem("notes", "Large", "x".repeat(200_001), Map.of()));
+        var largeContext = List.of(new CodeGeneration.ContextItem("notes", "Large", "x".repeat(128_001), Map.of()));
         assertThatThrownBy(() -> service.generate(new CodeGeneration.Request("Edit", new CodeGeneration.Target("", null, null), largeContext))).isInstanceOf(ResponseStatusException.class);
         verifyNoInteractions(provider);
+    }
+
+    @Test void applies128kLimitToEntireSerializedContextIncludingProviderEntries() throws Exception {
+        var target = new CodeGeneration.Target("", null, null);
+        var provided = new CodeGeneration.ContextItem("runtime", "Provider note", "provider", Map.of("source", "built-in"));
+        var base = new CodeGeneration.ContextItem("notes", "User note", "", Map.of());
+        int overhead = mapper.writeValueAsString(List.of(base, provided)).length();
+        var atLimit = new CodeGeneration.ContextItem("notes", "User note", "x".repeat(128_000 - overhead), Map.of());
+        var service = new CodeGenerationService(provider, List.of(request -> List.of(provided)), mapper);
+        when(provider.generate(anyList())).thenReturn(new CodeGeneration.Result("ok", "test/model"));
+        assertThat(service.generate(new CodeGeneration.Request("Edit", target, List.of(atLimit))).code()).isEqualTo("ok");
+        var overLimit = new CodeGeneration.ContextItem("notes", "User note", "x".repeat(128_001 - overhead), Map.of());
+        assertThatThrownBy(() -> service.generate(new CodeGeneration.Request("Edit", target, List.of(overLimit))))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("128,000-character budget");
+        verify(provider, times(1)).generate(anyList());
     }
 
     @Test void configurationExposesOnlyAvailabilityProviderAndModel() throws Exception {

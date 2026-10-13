@@ -2,6 +2,10 @@
 window.Vibecode = (() => {
   const dialog = $('#vibe-dialog');
   const history = new WeakMap();
+  const MAX_OUTPUT_CHARS = 12000;
+  const MAX_NOTEBOOK_OUTPUT_CHARS = 64000;
+  // Reserve space under the server's 128k limit for built-in/provider context entries.
+  const MAX_CONTEXT_CHARS = 112000;
   let edit = null, controller = null, generation = 0;
 
   function close() {
@@ -40,27 +44,96 @@ window.Vibecode = (() => {
     }catch(e){if(version===generation){error(e.message);$('#vibe-generate').disabled=true;}}
   }
 
+  function outputText(output) {
+    const data=output?.data || {};
+    const type=output?.output_type;
+    const plain=value=>Array.isArray(value)?value.join(''):String(value ?? '');
+    if(type==='stream')return {type:output.name==='stderr'?'stderr':'stdout',text:plain(output.text)};
+    if(type==='error')return {type:'error',text:plain(Array.isArray(output.traceback) && output.traceback.length?output.traceback.join('\n'):`${output.ename || 'Error'}: ${output.evalue || ''}`)};
+    if(type==='execute_result' || type==='display_data') {
+      const grid=data['application/vnd.gridjs+json'];
+      if(grid && Array.isArray(grid.columns) && Array.isArray(grid.data)) {
+        const columns=grid.columns.map(column=>String(typeof column==='object'?(column.name ?? column.id ?? ''):column));
+        const lines=[columns.join('\t')];
+        let included=0,used=lines[0].length;
+        for(const row of grid.data) {
+          if(included>=100 || used>=MAX_OUTPUT_CHARS)break;
+          const values=Array.isArray(row)?row:[];
+          const line=values.map(value=>String(value ?? '').replaceAll('\t',' ').replaceAll('\n',' ').slice(0,1000)).join('\t');
+          lines.push(line);used+=line.length+1;
+          included++;
+        }
+        return {type:'grid',text:`${grid.title || 'Grid table'}\n${lines.join('\n')}`,rowsTotal:grid.data.length,rowsIncluded:included};
+      }
+      // Chart options and base64 images are large and do not help with textual follow-up edits.
+      if(data['image/png'] || data['application/vnd.apache.echarts+json'])return null;
+      if(data['text/plain'] != null)return {type:'text',text:plain(data['text/plain'])};
+    }
+    return null;
+  }
+
+  function precedingCells(document,index) {
+    const cells=document.cells.slice(0,index).map((c,i)=>({index:i+1,type:c.cell_type,source:source(c),executionCount:c.execution_count ?? null}));
+    let remaining=MAX_NOTEBOOK_OUTPUT_CHARS,omitted=0,truncated=0,included=0;
+    // Allocate the bounded output budget newest-first, but keep notebook order in the request.
+    for(let i=cells.length-1;i>=0;i--) {
+      const originals=document.cells[i].cell_type==='code'?(document.cells[i].outputs || []):[];
+      const selected=[];
+      for(let j=originals.length-1;j>=0;j--) {
+        const item=outputText(originals[j]);
+        if(!item)continue;
+        if(remaining<=0){omitted++;continue;}
+        const originalLength=item.text.length;
+        const limit=Math.min(MAX_OUTPUT_CHARS,remaining);
+        if(originalLength>limit){item.text=item.text.slice(0,limit);item.truncated=true;item.originalChars=originalLength;}
+        if(item.rowsTotal!==undefined && item.rowsIncluded<item.rowsTotal)item.truncated=true;
+        if(item.truncated)truncated++;
+        remaining-=item.text.length;
+        included++;
+        selected.unshift(item);
+      }
+      if(selected.length)cells[i].outputs=selected;
+    }
+    return {cells,metadata:{cellCount:cells.length,outputCount:included,outputsOmitted:omitted,outputsTruncated:truncated,outputBudgetChars:MAX_NOTEBOOK_OUTPUT_CHARS}};
+  }
+
   function contextFor(current) {
     const context=[];
     const settings=window.NotebookSettings?.aiContext?.(current.notebook.document);
     if(settings)context.push(settings);
     if($('#vibe-notebook-context').checked) {
       const index=current.notebook.document.cells.indexOf(current.cell);
-      const cells=current.notebook.document.cells.slice(0,index).map((c,i)=>({index:i+1,type:c.cell_type,source:source(c),executionCount:c.execution_count ?? null}));
-      if(cells.length)context.push({kind:'notebook',title:current.notebook.name+' · preceding cells',content:JSON.stringify(cells),metadata:{cellCount:cells.length}});
+      const prior=precedingCells(current.notebook.document,index);
+      if(prior.cells.length)context.push({kind:'notebook',title:current.notebook.name+' · preceding cells',content:JSON.stringify(prior.cells),metadata:prior.metadata});
     }
     const notes=$('#vibe-context-notes').value.trim();
     if(notes)context.push({kind:'notes',title:'Additional user context',content:notes,metadata:{}});
     const failures=(current.cell.outputs||[]).filter(o=>o.output_type==='error');
-    if(failures.length)context.push({kind:'diagnostics',title:'Current cell errors',content:JSON.stringify(failures),metadata:{}});
+    if(failures.length) {
+      let remaining=MAX_OUTPUT_CHARS,omitted=0,truncated=0;
+      const diagnostics=[];
+      for(let i=failures.length-1;i>=0;i--) {
+        if(remaining<=0){omitted++;continue;}
+        const item=outputText(failures[i]);
+        const originalLength=item.text.length;
+        if(originalLength>remaining){item.text=item.text.slice(0,remaining);item.truncated=true;item.originalChars=originalLength;truncated++;}
+        remaining-=item.text.length;
+        diagnostics.unshift(item);
+      }
+      context.push({kind:'diagnostics',title:'Current cell errors',content:JSON.stringify(diagnostics),metadata:{errorCount:diagnostics.length,errorsOmitted:omitted,errorsTruncated:truncated}});
+    }
+    if(JSON.stringify(context).length>MAX_CONTEXT_CHARS)
+      throw new Error('AI context exceeds the local 112,000-character budget (overall limit: 128,000). Turn off preceding cells or shorten Additional context and retry.');
     return context;
   }
 
   async function generate(event) {
     event.preventDefault();if(!edit || controller)return;
     const current=edit;
-    const request={prompt:$('#vibe-prompt').value.trim(),target:{source:current.original,start:current.start,end:current.end},context:contextFor(current)};
-    if(!request.prompt)return;
+    const prompt=$('#vibe-prompt').value.trim();if(!prompt)return;
+    let context;
+    try{context=contextFor(current);}catch(e){error(e.message);return;}
+    const request={prompt,target:{source:current.original,start:current.start,end:current.end},context};
     controller=new AbortController();const version=generation;loading(true);$('#vibe-error').hidden=true;
     try {
       const result=await api('/ai/generate','POST',request,{signal:controller.signal});
