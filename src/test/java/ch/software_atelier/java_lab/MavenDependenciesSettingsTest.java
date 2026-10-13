@@ -29,6 +29,36 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MavenDependenciesSettingsTest {
     @TempDir Path directory;
 
+    @Test void resolvesFromLocalCacheWithoutSettingsOrSecurityFile() throws Exception {
+        Path missingSettings = directory.resolve("missing-settings.xml");
+        Path cache = directory.resolve("cache-without-settings");
+        writeArtifacts(cache);
+        assertThat(Files.exists(missingSettings)).isFalse();
+        assertThat(Files.exists(directory.resolve("settings-security.xml"))).isFalse();
+
+        List<Path> jars = new MavenDependencies(missingSettings, null, cache)
+                .resolve(List.of("test.fixture:parent:1.0"));
+
+        assertThat(jars).extracting(path -> path.getFileName().toString())
+                .containsExactlyInAnyOrder("parent-1.0.jar", "child-1.0.jar");
+    }
+
+    @Test void encryptedPasswordWithoutSecurityFileFailsWithoutLeakingCredential() throws Exception {
+        String encryptedPassword = new DefaultPlexusCipher().encryptAndDecorate("private-secret", "master-secret");
+        Path settings = writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <servers><server><id>private</id><username>fixture-user</username>
+                    <password>%s</password></server></servers>
+                </settings>
+                """.formatted(encryptedPassword));
+
+        assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Could not decrypt Maven settings credentials")
+                .hasMessageNotContaining(encryptedPassword)
+                .hasMessageNotContaining("private-secret");
+    }
+
     @Test void resolvesTransitiveJarsFromActiveProfileRepository() throws Exception {
         Path repository = directory.resolve("repository");
         writeArtifacts(repository);

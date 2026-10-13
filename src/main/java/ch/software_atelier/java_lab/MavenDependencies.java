@@ -118,17 +118,27 @@ final class MavenDependencies {
                     mirror.getMirrorOf(), mirror.getMirrorOfLayouts());
         session.setMirrorSelector(mirrors);
 
-        // Maven's own decrypter supports plain and settings-security.xml encrypted passwords.
-        Path security = userSettings == null
-                ? Path.of(System.getProperty("user.home"), ".m2", "settings-security.xml")
-                : userSettings.resolveSibling("settings-security.xml");
-        var decrypted = new DefaultSettingsDecrypter(
-                new DefaultSecDispatcher(new DefaultPlexusCipher(), java.util.Map.of(), security.toString()))
-                .decrypt(new DefaultSettingsDecryptionRequest(settings));
-        if (!decrypted.getProblems().isEmpty())
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not decrypt Maven settings credentials");
+        // A security file is only needed for encrypted credentials. Maven's decrypter
+        // reports a missing file as an error even when no decryption is required.
+        var servers = settings.getServers();
+        var configuredProxies = settings.getProxies();
+        boolean encrypted = servers.stream().anyMatch(server -> isEncrypted(server.getPassword())
+                        || isEncrypted(server.getPassphrase()))
+                || configuredProxies.stream().anyMatch(proxy -> isEncrypted(proxy.getPassword()));
+        if (encrypted) {
+            Path security = userSettings == null
+                    ? Path.of(System.getProperty("user.home"), ".m2", "settings-security.xml")
+                    : userSettings.resolveSibling("settings-security.xml");
+            var decrypted = new DefaultSettingsDecrypter(
+                    new DefaultSecDispatcher(new DefaultPlexusCipher(), java.util.Map.of(), security.toString()))
+                    .decrypt(new DefaultSettingsDecryptionRequest(settings));
+            if (!decrypted.getProblems().isEmpty())
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not decrypt Maven settings credentials");
+            servers = decrypted.getServers();
+            configuredProxies = decrypted.getProxies();
+        }
         var auth = new DefaultAuthenticationSelector();
-        for (var server : decrypted.getServers()) {
+        for (var server : servers) {
             var builder = new AuthenticationBuilder();
             if (server.getUsername() != null) builder.addUsername(server.getUsername());
             if (server.getPassword() != null) builder.addPassword(server.getPassword());
@@ -137,7 +147,7 @@ final class MavenDependencies {
         }
         session.setAuthenticationSelector(auth);
         var proxies = new DefaultProxySelector();
-        for (var proxy : decrypted.getProxies()) {
+        for (var proxy : configuredProxies) {
             if (!proxy.isActive()) continue;
             var builder = new AuthenticationBuilder();
             if (proxy.getUsername() != null) builder.addUsername(proxy.getUsername());
@@ -146,6 +156,10 @@ final class MavenDependencies {
                     proxy.getPort(), builder.build()), proxy.getNonProxyHosts());
         }
         session.setProxySelector(proxies);
+    }
+
+    private static boolean isEncrypted(String value) {
+        return value != null && value.startsWith("{") && value.endsWith("}");
     }
 
     private static List<RemoteRepository> repositories(Settings settings) {
