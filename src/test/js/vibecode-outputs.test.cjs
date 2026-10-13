@@ -75,16 +75,16 @@ test('large outputs are bounded newest-first with explicit truncation metadata',
   assert.ok(notebook.metadata.outputsTruncated>0);
   assert.equal(prior[7].outputs[0].text.length,12000);
   assert.equal(prior[7].outputs[0].truncated,true);
-  assert.ok(JSON.stringify(sent.context).length<=128000);
+  assert.ok(prior.flatMap(cell=>cell.outputs||[]).reduce((sum,output)=>sum+output.text.length,0)<=64000);
 });
 
-test('oversized full context fails visibly before AI request',async()=>{
-  const {sent,error}=await requestFor([
+test('large preceding source is sent to the server for its context validation',async()=>{
+  const {sent}=await requestFor([
     {cell_type:'code',source:['x'.repeat(130000)],outputs:[]},
     {cell_type:'code',source:['// current'],outputs:[]}
   ]);
-  assert.equal(sent,undefined);
-  assert.match(error,/overall limit: 128,000/);
+  const notebook=sent.context.find(item=>item.kind==='notebook');
+  assert.equal(JSON.parse(notebook.content)[0].source.length,130000);
 });
 
 test('current-cell diagnostics send bounded error text without arbitrary payload fields',async()=>{

@@ -413,7 +413,7 @@ Requests send the target source, instruction, chosen context, current-cell error
 
 Vibecode also receives the current notebook's configured variable names, secret flags, environment-variable bindings, and Maven coordinates, even when preceding-cell context is disabled. It knows to use `labVar("NAME")` or `requireLabVar("NAME")`. Notebook defaults, locally stored values, and resolved environment values are not added to this settings context. As with any AI request, code or notes you explicitly include in the target or optional context are sent to the configured provider.
 
-The default request timeout is 120 seconds and output budget is 32,768 tokens. Optional Spring properties are `lab.ai.timeout`, `lab.ai.max-tokens`, and `lab.ai.api-url`; credentials and model use `lab.ai.api-key` and `lab.ai.model`.
+The default request timeout is 120 seconds and output budget is 128,000 tokens. Optional Spring properties are `lab.ai.timeout`, `lab.ai.max-tokens`, and `lab.ai.api-url`; credentials and model use `lab.ai.api-key` and `lab.ai.model`.
 
 ### Extensible AI context
 
@@ -433,7 +433,7 @@ The API separates the instruction, edit target, and context:
 
 - **`AiContextProvider`** is a Spring extension point: additional beans can supply workspace files, kernel facts, documentation, retrieved references, or other context. `JavaRuntimeContext` supplies runtime details; `ChartContext`, `EChartsContext`, and `GridContext` supply the bundled visualization wrappers and their display APIs.
 - **`ContextItem`** contains `kind`, `title`, `content`, and arbitrary JSON `metadata`; the browser already uses notebook, notes, and diagnostics entries.
-- **`CodeGenerationService`** validates input and composes provider-neutral messages. It accepts up to 32 client context entries and a combined 128,000-character serialized context budget, including built-in context entries.
+- **`CodeGenerationService`** validates input and composes provider-neutral messages. It accepts up to 32 client context entries and a combined 200,000-character serialized context budget, including built-in context entries.
 - **`CodeGenerationProvider`** isolates the model transport. `OpenAiCompatibleProvider` implements the standard OpenAI-compatible API transport; future providers can use the same edit and context contracts.
 
 Instructions are limited to 10,000 characters and cell sources/replacements to 100,000 characters. Textual outputs are capped at 12,000 characters each and 64,000 characters in total, with recent outputs preferred and truncation reported in context metadata. Other oversized context is rejected with a visible error; model responses are never silently truncated before application. Provider errors are displayed inline, preserving the original cell.

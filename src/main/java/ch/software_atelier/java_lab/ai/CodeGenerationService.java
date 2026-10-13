@@ -11,7 +11,6 @@ import java.util.List;
 
 @Service
 public class CodeGenerationService {
-    private static final int MAX_CONTEXT_CHARACTERS = 128_000;
     private static final String SYSTEM_PROMPT = """
         You edit Java code in a Java Lab notebook powered by JShell.
         Follow the user's instruction to generate replacement code for the specified target.
@@ -47,11 +46,8 @@ public class CodeGenerationService {
         contextProviders.forEach(p -> context.addAll(p.contextFor(request)));
         validateContext(context, 64);
         try {
-            String serializedContext = mapper.writeValueAsString(context);
-            if (serializedContext.length() > MAX_CONTEXT_CHARACTERS)
-                throw invalid("Context exceeds the 128,000-character budget; include fewer cells or notes");
             var messages = List.of(new CodeGeneration.Message("system", SYSTEM_PROMPT),
-                new CodeGeneration.Message("user", "Reference context (JSON):\n" + serializedContext),
+                new CodeGeneration.Message("user", "Reference context (JSON):\n" + mapper.writeValueAsString(context)),
                 new CodeGeneration.Message("user", "Edit target (JSON, offsets are UTF-16 code units):\n" + mapper.writeValueAsString(target)
                     + "\n\nUser instruction:\n" + request.prompt()));
             return provider.generate(messages);
@@ -60,10 +56,14 @@ public class CodeGenerationService {
 
     private void validateContext(List<CodeGeneration.ContextItem> context, int limit) {
         if (context.size() > limit) throw invalid("Too many context entries (maximum " + limit + ")");
+        int size = 0;
         for (var item : context) {
             if (item == null || item.kind() == null || item.kind().isBlank() || item.kind().length() > 100
                 || item.title() == null || item.title().length() > 200 || item.content() == null)
                 throw invalid("Context entries require kind, title, and content");
+            try { size += mapper.writeValueAsString(item).length(); }
+            catch (JsonProcessingException e) { throw invalid("Invalid context metadata"); }
+            if (size > 200_000) throw invalid("Context exceeds the 200,000-character budget; include fewer cells or notes");
         }
     }
     private ResponseStatusException invalid(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }

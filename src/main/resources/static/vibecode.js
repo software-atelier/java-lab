@@ -4,8 +4,6 @@ window.Vibecode = (() => {
   const history = new WeakMap();
   const MAX_OUTPUT_CHARS = 12000;
   const MAX_NOTEBOOK_OUTPUT_CHARS = 64000;
-  // Reserve space under the server's 128k limit for built-in/provider context entries.
-  const MAX_CONTEXT_CHARS = 112000;
   let edit = null, controller = null, generation = 0;
 
   function close() {
@@ -122,8 +120,6 @@ window.Vibecode = (() => {
       }
       context.push({kind:'diagnostics',title:'Current cell errors',content:JSON.stringify(diagnostics),metadata:{errorCount:diagnostics.length,errorsOmitted:omitted,errorsTruncated:truncated}});
     }
-    if(JSON.stringify(context).length>MAX_CONTEXT_CHARS)
-      throw new Error('AI context exceeds the local 112,000-character budget (overall limit: 128,000). Turn off preceding cells or shorten Additional context and retry.');
     return context;
   }
 
