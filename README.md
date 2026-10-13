@@ -267,7 +267,7 @@ import org.jfree.data.category.*;
 import org.jfree.data.xy.*;
 import org.jfree.data.general.*;
 import org.jfree.data.time.*;
-import dev.mars.lab.display.Charts;
+import ch.software_atelier.java_lab.display.Charts;
 ```
 
 Other JFreeChart classes can be imported normally. For example, `PlotOrientation` lives in `org.jfree.chart.plot`. The kernel runs headlessly; display charts with `Charts.show`, rather than Swing windows or `ChartFrame`.
@@ -452,7 +452,7 @@ Java Lab executes Java only. Opening a Python notebook does not translate its co
 
 ```text
 pom.xml                              Executable JAR build
-src/main/java/dev/mars/lab/
+src/main/java/ch/software_atelier/java_lab/
   JavaLabApplication.java            Spring Boot entry point
   NotebookStore.java                 Working-directory storage
   NotebookController.java            Notebook REST API
@@ -478,7 +478,7 @@ src/main/resources/static/
   notebook-model.js                  Cell selection, clipboard data, structural undo/redo
   notebook-controls.js / .css        Jupyter-style modes, keys, palette, search, and editor commands
   vibecode.js                        AI prompt, context, selection edits, and undo
-src/test/java/dev/mars/lab/           Storage and execution tests
+src/test/java/ch/software_atelier/java_lab/           Storage and execution tests
 src/test/js/                         Rendering and export tests (Node built-ins)
 ```
 
