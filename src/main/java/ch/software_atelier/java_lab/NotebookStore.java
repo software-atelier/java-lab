@@ -30,11 +30,14 @@ public class NotebookStore {
     public NotebookValues values() { return values; }
 
     public record Entry(String name, long size, long modified) {}
+    public record Folder(String name, String path) {}
 
     public String directory() { return root.toString(); }
 
-    public List<Entry> list() throws IOException {
-        try (var files = Files.list(root)) {
+    public List<Entry> list() throws IOException { return list(""); }
+    public List<Entry> list(String folder) throws IOException {
+        Path directory = resolveFolder(folder, true);
+        try (var files = Files.list(directory)) {
             return files.filter(p -> isNotebookName(p.getFileName().toString()))
                 .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                 .map(p -> {
@@ -42,6 +45,101 @@ public class NotebookStore {
                     catch (IOException e) { throw new java.io.UncheckedIOException(e); }
                 }).sorted(Comparator.comparing(Entry::name, String.CASE_INSENSITIVE_ORDER)).toList();
         }
+    }
+
+    public List<Folder> folders(String folder) throws IOException {
+        Path directory = resolveFolder(folder, true);
+        try (var files = Files.list(directory)) {
+            return files.filter(p -> Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS))
+                .map(p -> new Folder(p.getFileName().toString(), root.relativize(p).toString().replace('\\', '/')))
+                .sorted(Comparator.comparing(Folder::name, String.CASE_INSENSITIVE_ORDER)).toList();
+        }
+    }
+
+    public synchronized String createFolder(String path) throws IOException {
+        Path folder = resolveFolder(path, false);
+        if (folder.equals(root)) throw badRequest("Folder name is required");
+        if (!Files.isDirectory(folder.getParent(), LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent folder not found");
+        try { Files.createDirectory(folder); }
+        catch (FileAlreadyExistsException e) { throw new ResponseStatusException(HttpStatus.CONFLICT, "Folder already exists"); }
+        return root.relativize(folder).toString().replace('\\', '/');
+    }
+
+    public synchronized void deleteFolder(String path) throws IOException {
+        Path folder = resolveFolder(path, true);
+        if (folder.equals(root)) throw badRequest("Cannot delete root folder");
+        try { Files.delete(folder); }
+        catch (DirectoryNotEmptyException e) { throw new ResponseStatusException(HttpStatus.CONFLICT, "Folder is not empty"); }
+    }
+
+    public synchronized String renameFolder(String path, String targetName) throws IOException {
+        Path source = resolveFolder(path, true);
+        if (source.equals(root)) throw badRequest("Cannot rename root folder");
+        if (targetName == null || !validSegment(targetName)) throw badRequest("Invalid folder name");
+        try (var children = Files.list(source)) {
+            if (children.findAny().isPresent()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Only empty folders can be renamed");
+        }
+        String parent = root.relativize(source.getParent()).toString().replace('\\', '/');
+        Path target = resolveFolder(parent.isEmpty() ? targetName : parent + "/" + targetName, false);
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Folder already exists");
+        Files.move(source, target);
+        return root.relativize(target).toString().replace('\\', '/');
+    }
+
+    private Path resolveFolder(String path, boolean mustExist) {
+        if (path == null || path.isBlank()) return root;
+        String[] segments = path.split("/", -1);
+        if (segments.length > 10 || path.length() > 500) throw badRequest("Invalid folder path");
+        Path result = root;
+        for (String segment : segments) {
+            if (!validSegment(segment)) throw badRequest("Invalid folder path");
+            result = result.resolve(segment);
+            if (Files.isSymbolicLink(result)) throw badRequest("Symbolic links are not allowed in notebook paths");
+        }
+        if (mustExist && !Files.isDirectory(result, LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found");
+        return result;
+    }
+
+    private static boolean validSegment(String segment) {
+        return segment != null && !segment.isBlank() && !segment.equals(".") && !segment.equals("..")
+            && segment.length() <= 100 && !segment.contains("/") && !segment.contains("\\") && !segment.contains(":") && !segment.contains("\0")
+            && segment.chars().noneMatch(c -> c < 32 || c == 127);
+    }
+
+    public record Upload(String name, String path, long size, List<List<String>> preview) {}
+
+    public synchronized Upload upload(String folder, String requestedName, byte[] bytes) throws IOException {
+        Path directory = resolveFolder(folder, true);
+        String lowerName = requestedName == null ? "" : requestedName.toLowerCase(java.util.Locale.ROOT);
+        if (!validSegment(requestedName) || requestedName.startsWith(".") || requestedName.length() > 100
+            || lowerName.endsWith(".jnb") || lowerName.endsWith(".ipynb")) throw badRequest("Invalid upload filename");
+        if (bytes == null || bytes.length == 0 || bytes.length > 10_000_000) throw badRequest("Upload must be 1 byte–10 MB");
+        String base = requestedName, suffix = "";
+        int dot = requestedName.lastIndexOf('.');
+        if (dot > 0) { base = requestedName.substring(0, dot); suffix = requestedName.substring(dot); }
+        String name = requestedName;
+        for (int counter = 1; Files.exists(directory.resolve(name), LinkOption.NOFOLLOW_LINKS); counter++)
+            name = base + "-" + counter + suffix;
+        Path target = directory.resolve(name);
+        List<List<String>> preview = name.toLowerCase(java.util.Locale.ROOT).endsWith(".csv") ? csvPreview(bytes) : List.of();
+        Files.write(target, bytes, StandardOpenOption.CREATE_NEW);
+        return new Upload(name, root.relativize(target).toString().replace('\\', '/'), bytes.length, preview);
+    }
+
+    private List<List<String>> csvPreview(byte[] bytes) {
+        String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        List<List<String>> rows = new java.util.ArrayList<>();
+        try (var parser = org.apache.commons.csv.CSVParser.parse(content, org.apache.commons.csv.CSVFormat.DEFAULT)) {
+            for (var record : parser) {
+                List<String> columns = new java.util.ArrayList<>();
+                for (int col = 0; col < Math.min(record.size(), 30); col++) columns.add(record.get(col));
+                rows.add(columns);
+                if (rows.size() == 21) break;
+            }
+        } catch (Exception e) { throw badRequest("Invalid CSV file"); }
+        return rows;
     }
 
     public ObjectNode read(String name) throws IOException {
@@ -72,6 +170,8 @@ public class NotebookStore {
     public synchronized String create(String requested) throws IOException {
         String name = nativeName(requested == null || requested.isBlank() ? "Untitled" : requested);
         Path path = resolve(name);
+        if (!Files.isDirectory(path.getParent(), LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found");
         String base = name.substring(0, name.length() - 4);
         int number = 1;
         while (Files.exists(path)) { name = base + "-" + number++ + ".jnb"; path = resolve(name); }
@@ -93,7 +193,9 @@ public class NotebookStore {
     public synchronized void save(String name, ObjectNode document) throws IOException {
         validate(document);
         Path path = resolve(name);
-        Path temporary = Files.createTempFile(root, ".java-lab-", ".tmp");
+        if (!Files.isDirectory(path.getParent(), LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found");
+        Path temporary = Files.createTempFile(path.getParent(), ".java-lab-", ".tmp");
         try {
             mapper.writeValue(temporary.toFile(), document);
             try { Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
@@ -122,10 +224,14 @@ public class NotebookStore {
     }
 
     private Path resolve(String name) {
-        if (name == null || name.isBlank() || name.contains("/") || name.contains("\\") || name.contains("\0") || !isNotebookName(name))
-            throw badRequest("Use a notebook filename ending in .jnb, without directory separators (.ipynb is supported for legacy files)");
-        Path path = root.resolve(name).normalize();
-        if (!root.equals(path.getParent()) || Files.isSymbolicLink(path)) throw badRequest("Invalid notebook path");
+        if (name == null || name.isBlank() || name.contains("\\") || !isNotebookName(name))
+            throw badRequest("Use a notebook filename ending in .jnb (.ipynb is supported for legacy files)");
+        int slash = name.lastIndexOf('/');
+        String folder = slash < 0 ? "" : name.substring(0, slash);
+        String filename = name.substring(slash + 1);
+        if (!validSegment(filename)) throw badRequest("Invalid notebook filename");
+        Path path = resolveFolder(folder, false).resolve(filename);
+        if (Files.isSymbolicLink(path)) throw badRequest("Invalid notebook path");
         return path;
     }
 

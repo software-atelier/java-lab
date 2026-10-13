@@ -59,4 +59,30 @@ class NotebookStoreTest {
         assertThat(store.read("Legacy.jnb")).isEqualTo(original);
         assertThat(Files.exists(directory.resolve("Legacy.ipynb"))).isFalse();
     }
+
+    @Test void nestedFoldersKeepNotebooksAndUploadsContained() throws Exception {
+        var store = new NotebookStore(new ObjectMapper(), directory);
+        assertThat(store.createFolder("Projects")).isEqualTo("Projects");
+        assertThat(store.createFolder("Projects/2026")).isEqualTo("Projects/2026");
+        assertThat(store.folders("Projects")).extracting(NotebookStore.Folder::name).containsExactly("2026");
+        String notebook = store.create("Projects/2026/Analysis");
+        assertThat(notebook).isEqualTo("Projects/2026/Analysis.jnb");
+        assertThat(store.list("Projects/2026")).extracting(NotebookStore.Entry::name).containsExactly("Analysis.jnb");
+        assertThat(store.read(notebook)).isNotNull();
+        var upload = store.upload("Projects/2026", "data.csv", "name,age\nAda,28\nBob,31\n".getBytes());
+        assertThat(upload.path()).isEqualTo("Projects/2026/data.csv");
+        assertThat(upload.preview()).containsExactly(
+            java.util.List.of("name", "age"), java.util.List.of("Ada", "28"), java.util.List.of("Bob", "31"));
+        assertThat(store.upload("Projects/2026", "data.csv", "a,b\n".getBytes()).name()).isEqualTo("data-1.csv");
+        assertThatThrownBy(() -> store.deleteFolder("Projects/2026")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> store.createFolder("../escape")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> store.list("Projects/../2026")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> store.upload("Projects/2026", "../escape.csv", new byte[]{1}))
+            .isInstanceOf(ResponseStatusException.class);
+        for (String unsafe : java.util.List.of("/tmp/outside.csv", "sub/data.csv", "..\\escape.csv", "C:\\outside.csv", "COPY.JNB", "LEGACY.IPYNB"))
+            assertThatThrownBy(() -> store.upload("Projects/2026", unsafe, new byte[]{1}))
+                .as("unsafe upload filename: %s", unsafe).isInstanceOf(ResponseStatusException.class);
+        Files.createSymbolicLink(directory.resolve("link"), directory.resolve("Projects"));
+        assertThatThrownBy(() -> store.list("link")).isInstanceOf(ResponseStatusException.class);
+    }
 }

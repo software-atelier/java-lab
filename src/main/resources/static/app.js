@@ -4,7 +4,9 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const source = cell => Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
-const state = { files: [], notebooks: [], active: null, launcher: true, panel: 'files', opening: new Map() };
+const state = { files: [], folders: [], folder: '', notebooks: [], active: null, launcher: true, panel: 'files', opening: new Map() };
+const folderQuery = folder => '?folder=' + encodeURIComponent(folder || '');
+const notebookPath = (folder, name) => folder ? folder + '/' + name : name;
 let toastTimer;
 
 async function api(path, method = 'GET', body, options = {}) {
@@ -28,6 +30,22 @@ function notebookSnapshot(document) {
 }
 function formValues(n) {
   return n.document.metadata?.java_lab?.form_values || {};
+}
+function markFollowingStale(n, index) {
+  n.staleCells ||= new Set();
+  for(let i=index+1;i<n.document.cells.length;i++) if(n.document.cells[i].outputs?.length)n.staleCells.add(n.document.cells[i].id);
+  if(active()===n) $$('#cells .cell').forEach((element,i)=>element.classList.toggle('stale-output',n.staleCells.has(n.document.cells[i]?.id)));
+  updateStatus();
+}
+function clearStaleThrough(n, index) {
+  n.staleCells?.delete(n.document.cells[index]?.id);
+  if(!n.staleCells?.size)delete n.staleCells;
+}
+function validVisibleForms() {
+  const invalid=$$('#cells .lab-form [data-form-field]').find(control=>!control.checkValidity());
+  if(!invalid)return true;
+  invalid.reportValidity();invalid.focus();notify('Correct the highlighted form field before running.',true);
+  return false;
 }
 function hydrateFormValues(n) {
   const values={...formValues(n)};
@@ -63,15 +81,16 @@ function cell(type = 'code', text = '') {
 }
 
 async function refreshFiles() {
-  const result = await api('/notebooks'); state.files = result.files;
+  const result = await api('/notebooks' + folderQuery(state.folder)); state.files = result.files; state.folders = result.folders || []; state.folder = result.folder || '';
+  $('#folder-path').textContent = state.folder || 'Working directory';
   $('#directory').textContent = result.directory; $('#directory').title = result.directory;
   $('#connection-state').textContent = 'Connected'; renderFiles();
 }
 function renderFiles() {
   const filter = $('#file-search').value.toLowerCase();
   const files = state.files.filter(f => f.name.toLowerCase().includes(filter));
-  $('#file-list').innerHTML = files.length ? files.map(f => `<button class="file-row ${active()?.name === f.name ? 'active' : ''}" data-file="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}">${icon('file')}<span class="file-name">${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time></button>`).join('') : `<div class="empty-files">${filter ? 'No matching notebooks.' : 'A fresh workspace.<br>Create your first notebook to begin.'}</div>`;
-  $('#recent-files').innerHTML = state.files.length ? [...state.files].sort((a,b) => b.modified-a.modified).slice(0,4).map(f => `<button class="recent-row" data-file="${escapeHtml(f.name)}">${icon('file')}<span>${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time>${icon('chevron')}</button>`).join('') : '<div class="recent-empty">Your notebooks will appear here. Let’s make the first one.</div>';
+  $('#file-list').innerHTML = (state.folder ? `<button class="file-row folder-row" data-parent-folder="true">${icon('folder')}<span class="file-name">..</span></button>` : '') + state.folders.filter(f=>f.name.toLowerCase().includes(filter)).map(f => `<button class="file-row folder-row" data-folder="${escapeHtml(f.path)}" title="Open ${escapeHtml(f.name)}">${icon('folder')}<span class="file-name">${escapeHtml(f.name)}</span></button>`).join('') + (files.length ? files.map(f => `<button class="file-row ${active()?.path === notebookPath(state.folder, f.name) ? 'active' : ''}" data-file="${escapeHtml(f.name)}" data-file-folder="${escapeHtml(state.folder)}" title="${escapeHtml(f.name)}">${icon('file')}<span class="file-name">${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time></button>`).join('') : (!state.folder && !state.folders.length ? `<div class="empty-files">${filter ? 'No matching notebooks.' : 'A fresh workspace.<br>Create your first notebook to begin.'}</div>` : ''));
+  $('#recent-files').innerHTML = state.files.length ? [...state.files].sort((a,b) => b.modified-a.modified).slice(0,4).map(f => `<button class="recent-row" data-file="${escapeHtml(f.name)}" data-file-folder="${escapeHtml(state.folder)}">${icon('file')}<span>${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time>${icon('chevron')}</button>`).join('') : '<div class="recent-empty">Your notebooks will appear here. Let’s make the first one.</div>';
 }
 function renderTabs() {
   $('#tabs').innerHTML = (state.launcher ? '<div class="tab active" data-launcher="true">'+icon('grid')+'<span class="tab-name">Launcher</span></div>' : '') + state.notebooks.map(n => `<div class="tab ${active() === n ? 'active' : ''}" data-tab="${n.uid}" role="button" tabindex="0">${icon('file')}<span class="tab-name">${escapeHtml(n.name)}</span>${n.dirty ? '<span class="dirty-dot" title="Unsaved changes"></span>' : ''}<button class="icon-button" data-close="${n.uid}" title="Close notebook" aria-label="Close ${escapeHtml(n.name)}">${icon('close')}</button></div>`).join('');
@@ -81,25 +100,26 @@ function renderKernels() {
   $('#kernel-list').innerHTML = state.notebooks.length ? state.notebooks.map(n => `<div class="kernel-row">${icon('terminal')}<span title="${escapeHtml(n.name)}">${escapeHtml(n.name)}<br><small>${n.running ? 'Busy' : 'Idle'} · Java</small></span><button class="icon-button" data-close="${n.uid}" title="Close notebook and shut down kernel">${icon('close')}</button></div>`).join('') : '<div class="empty-files">No running kernels.</div>';
 }
 
-async function openNotebook(name) {
-  let notebook = state.notebooks.find(n => n.name === name);
+async function openNotebook(name, folder = state.folder) {
+  const path = notebookPath(folder, name);
+  let notebook = state.notebooks.find(n => n.path === path);
   if (!notebook) {
-    if (!state.opening.has(name)) {
-      state.opening.set(name, (async () => {
-        const document = await api('/notebooks/' + encodeURIComponent(name));
+    if (!state.opening.has(path)) {
+      state.opening.set(path, (async () => {
+        const document = await api('/notebooks/' + encodeURIComponent(name) + folderQuery(folder));
         let kernel=null,kernelError=null;
-        try{kernel=await api('/kernels', 'POST', {notebook:name});}
+        try{kernel=await api('/kernels', 'POST', {notebook:path});}
         catch(e){kernelError=e;}
         // Preserve notebook metadata and standard output objects on round trip.
-        const opened = {uid:crypto.randomUUID(), name, document, kernel:kernel?.id||null, configPending:!!kernelError, selected:0, dirty:false, revision:0, running:false, timer:null};
+        const opened = {uid:crypto.randomUUID(), name, folder, path, document, kernel:kernel?.id||null, configPending:!!kernelError, selected:0, dirty:false, revision:0, running:false, timer:null};
         state.notebooks.push(opened);
         hydrateFormValues(opened);
         if(kernelError)notify('Kernel could not start: '+kernelError.message+'. Open Settings to fix libraries or values.',true);
         return opened;
       })());
     }
-    try { notebook = await state.opening.get(name); }
-    finally { state.opening.delete(name); }
+    try { notebook = await state.opening.get(path); }
+    finally { state.opening.delete(path); }
   }
   state.active = notebook; state.launcher = false; renderWorkspace();
 }
@@ -116,12 +136,12 @@ function updateStatus() {
   const marked=n?window.NotebookControls?.indexes(n).length||1:0;
   $('#cell-position').textContent = n ? `Cell ${n.document.cells.length ? n.selected+1 : 0} of ${n.document.cells.length}${marked>1?' · '+marked+' selected':''}` : '';
   $('#kernel-status').textContent = n ? `Java · ${!n.kernel ? 'Not started' : n.running ? 'Busy' : 'Idle'}` : 'Java · JShell';
-  $('#status-message').textContent = n ? (n.configPending ? 'Settings need Apply before running' : n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Working directory';
+  $('#status-message').textContent = n ? (n.configPending ? 'Settings need Apply before running' : n.running ? 'Running cells…' : n.staleCells?.size ? 'Some outputs are stale · run following cells' : n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Working directory';
   $('#save-state').innerHTML = n?.saving ? 'Saving…' : n?.dirty ? 'Unsaved' : icon('check')+' Saved';
   $('#kernel-dot').classList.toggle('busy', !!n?.running);
   $('#cell-type').value = n?.document.cells[n.selected]?.cell_type || 'code';
-  for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running || n.configPending);
-  $$('[data-action="restart"]').forEach(b=>b.disabled=!n);
+  for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running || n.configPending || !n.kernel);
+  for (const action of ['restart','restart-run-all']) $$(`[data-action="${action}"]`).forEach(b=>b.disabled=!n || n.running || n.configPending);
   $$('[data-action="interrupt"]').forEach(b => b.disabled = !n?.running);
   $$('[data-action="vibecode"]').forEach(b => b.disabled = !n || n.running || n.document.cells[n.selected]?.cell_type !== 'code');
 }
@@ -135,7 +155,7 @@ async function saveNotebook(n = active(), announce = false) {
   clearTimeout(n.timer);
   if (n.savePromise) { await n.savePromise; if (!n.dirty) return; }
   const revision = n.revision; n.saving = true; updateStatus();
-  n.savePromise = api('/notebooks/'+encodeURIComponent(n.name), 'PUT', notebookSnapshot(n.document));
+  n.savePromise = api('/notebooks/'+encodeURIComponent(n.name)+folderQuery(n.folder), 'PUT', notebookSnapshot(n.document));
   try {
     await n.savePromise;
     if (n.revision === revision) n.dirty = false;
@@ -149,7 +169,7 @@ function markdown(text) {
 }
 function outputHtml(output, values = {}) {
   const form=LabPresentation.formHtml(output,values);
-  if(form)return `<div class="cell-output form-output"><div class="cell-prompt"></div><div class="output-content">${form}</div></div>`;
+  if(form)return `<div class="cell-output form-output"><div class="cell-prompt"></div><div class="output-content">${form}<button type="button" class="primary form-apply" data-form-action="apply">Apply values & run following cells</button></div></div>`;
   const formatted=LabPresentation.codeHtml(output);
   if(formatted)return `<div class="cell-output formatted-cell-output"><div class="cell-prompt"></div><div class="output-content">${formatted}</div></div>`;
   const table=LabPresentation.gridHtml(output);
@@ -181,7 +201,7 @@ function renderCells() {
     const outputs=(c.outputs||[]).map(o=>outputHtml(o,formValues(n))).join('');
     const hidden=!!c.metadata?.jupyter?.outputs_hidden;
     const heading=window.NotebookModel?.heading(c);
-    return `<article class="cell ${index === n.selected ? 'selected' : ''}" data-cell="${index}" tabindex="${index===n.selected?0:-1}"><div class="cell-actions">${heading?'<button class="icon-button" data-cell-action="heading" title="Collapse or expand heading">'+(c.metadata.java_lab?.heading_collapsed?'›':'⌄')+'</button>':''}${c.cell_type === 'code' ? `<button class="icon-button vibe-cell-button" data-cell-action="vibecode" title="AI edit this cell or selected text">✦ Vibecode</button>${window.Vibecode?.canUndo(c) ? '<button class="icon-button vibe-cell-button" data-cell-action="undo-ai" title="Undo the last AI edit">Undo AI edit</button>' : ''}` : ''}${c.cell_type === 'markdown' ? `<button class="icon-button preview-toggle" data-cell-action="preview" title="Toggle Markdown editing and preview">${rendered ? 'Edit & preview' : 'Done'}</button>` : ''}<button class="icon-button" data-cell-action="run" title="Run cell">${icon('play')}</button><button class="icon-button" data-cell-action="up" title="Move up">${icon('up')}</button><button class="icon-button" data-cell-action="down" title="Move down">${icon('down')}</button><button class="icon-button" data-cell-action="delete" title="Delete cell">${icon('trash')}</button></div><div class="cell-input-row"><div class="cell-prompt">${c.cell_type === 'code' ? 'In ['+(c.busy ? '*' : c.execution_count ?? ' ')+']:' : ''}</div>${input}</div>${hidden&&outputs?'<button class="show-outputs" data-action="toggle-outputs">Show hidden outputs</button>':''}<div class="cell-outputs ${c.metadata?.scrolled?'output-scrolled':''}" ${hidden?'hidden':''}>${outputs}</div></article>`;
+    return `<article class="cell ${index === n.selected ? 'selected' : ''} ${n.staleCells?.has(c.id) && outputs ? 'stale-output' : ''}" data-cell="${index}" tabindex="${index===n.selected?0:-1}"><div class="cell-actions">${heading?'<button class="icon-button" data-cell-action="heading" title="Collapse or expand heading">'+(c.metadata.java_lab?.heading_collapsed?'›':'⌄')+'</button>':''}${c.cell_type === 'code' ? `<button class="icon-button vibe-cell-button" data-cell-action="vibecode" title="AI edit this cell or selected text">✦ Vibecode</button>${window.Vibecode?.canUndo(c) ? '<button class="icon-button vibe-cell-button" data-cell-action="undo-ai" title="Undo the last AI edit">Undo AI edit</button>' : ''}` : ''}${c.cell_type === 'markdown' ? `<button class="icon-button preview-toggle" data-cell-action="preview" title="Toggle Markdown editing and preview">${rendered ? 'Edit & preview' : 'Done'}</button>` : ''}<button class="icon-button" data-cell-action="run" title="Run cell">${icon('play')}</button><button class="icon-button" data-cell-action="up" title="Move up">${icon('up')}</button><button class="icon-button" data-cell-action="down" title="Move down">${icon('down')}</button><button class="icon-button" data-cell-action="delete" title="Delete cell">${icon('trash')}</button></div><div class="cell-input-row"><div class="cell-prompt">${c.cell_type === 'code' ? 'In ['+(c.busy ? '*' : c.execution_count ?? ' ')+']:' : ''}</div>${input}</div>${hidden&&outputs?'<button class="show-outputs" data-action="toggle-outputs">Show hidden outputs</button>':''}<div class="cell-outputs ${c.metadata?.scrolled?'output-scrolled':''}" ${hidden?'hidden':''}>${outputs}</div></article>`;
   }).join('');
   $$('#cells textarea').forEach(sizeEditor);
   window.NotebookControls?.decorate(n);
@@ -243,13 +263,14 @@ async function evaluateCell(n, c) {
     const values=formValues(n);
     if(Object.keys(values).length>200 || JSON.stringify(values).length>100000)throw new Error('Too many form values (maximum 200 fields / 100 KB).');
     const result = await api(`/kernels/${n.kernel}/execute`, 'POST', {code,formValues:values});
-    c.execution_count = result.executionCount; c.outputs = result.outputs; hydrateFormValues(n); markDirty(n);
+    c.execution_count = result.executionCount; c.outputs = result.outputs; hydrateFormValues(n); clearStaleThrough(n,n.document.cells.indexOf(c)); markDirty(n);
     return result.success;
   } finally { delete c.busy; if(active()===n) renderCells(); }
 }
 async function runSelected(next = false, insert = false) {
   const n = active(); if (!n || n.running || !n.document.cells.length) return;
   if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+  if(!validVisibleForms())return;
   const indices=window.NotebookControls?.indexes(n)||[n.selected],index=indices.at(-1),mode=n.controls?.mode||'command';
   const cursor=$(`#cells [data-cell="${n.selected}"] textarea`)?.selectionStart??0;
   n.running = true;n.cancelRun=false;updateStatus(); renderKernels();let success=true;
@@ -260,11 +281,12 @@ async function runSelected(next = false, insert = false) {
     else {selectCell(index+1);window.NotebookControls?.command(n);}
   }else if(active()===n&&window.NotebookControls){if(mode==='edit'&&n.controls?.mode==='edit')NotebookControls.edit(n,cursor);else NotebookControls.command(n);}
 }
-async function runAll() {
-  const n = active(); if (!n || n.running) return;
+async function runAll(start = 0, target = active()) {
+  const n = target; if (!n || n.running) return;
   if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+  if(!validVisibleForms())return;
   n.running = true; n.cancelRun = false; updateStatus(); renderKernels();
-  try { for (const c of n.document.cells) {
+  try { for (const c of n.document.cells.slice(start)) {
     if (n.cancelRun) break;
     if (!await evaluateCell(n,c)) {
       n.selected=n.document.cells.indexOf(c);
@@ -274,16 +296,28 @@ async function runAll() {
   } }
   finally { n.running = false; updateStatus(); renderKernels();if(active()===n)window.NotebookControls?.restoreFocus(); }
 }
-async function restartKernel() {
+async function applyFormAndRun(button) {
+  const n=active(); if(!n || n.running)return;
+  const form=button.closest('.lab-form') || button.closest('.form-output')?.querySelector('.lab-form');
+  if(!form)return;
+  const controls=$$('[data-form-field]',form);
+  const invalid=controls.find(control=>!control.checkValidity());
+  if(invalid){invalid.reportValidity();invalid.focus();notify('Correct the highlighted form field before running.',true);return;}
+  const index=Number(button.closest('[data-cell]').dataset.cell);
+  if(index+1 >= n.document.cells.length){notify('Values applied. Add a following cell to use them.');return;}
+  await runAll(index+1,n);
+}
+async function restartKernel(runAfter = false) {
   const n = active(); if (!n) return;
   if(n.configPending)throw new Error('Apply notebook settings before restarting the kernel.');
-  if (!await modal('Restart kernel?', 'All Java variables, imports, and definitions in this session will be reset. Your cells and outputs will remain.', 'Restart')) return;
+  if (!await modal(runAfter ? 'Restart kernel & run all?' : 'Restart kernel?', 'All Java variables, imports, and definitions in this session will be reset. Your cells and outputs will remain.', runAfter ? 'Restart & run all' : 'Restart')) return;
   if(n.running)throw new Error('Interrupt execution before restarting the kernel.');
   if(n.dirty || n.savePromise)await saveNotebook(n);
-  n.cancelRun=true;const replacement=await api('/kernels','POST',{notebook:n.name});
+  n.cancelRun=true;const replacement=await api('/kernels','POST',{notebook:n.path});
   const old=n.kernel;n.kernel=replacement.id;n.configPending=false;
   api(`/kernels/${old}`, 'DELETE').catch(e=>notify('Old kernel cleanup failed: '+e.message,true));
-  notify('Kernel restarted · fresh Java session'); updateStatus();
+  n.staleCells=new Set(n.document.cells.filter(c=>c.outputs?.length).map(c=>c.id));notify('Kernel restarted · fresh Java session'); updateStatus();renderCells();
+  if(runAfter)await runAll(0,n);
 }
 async function closeNotebook(n) {
   if (!n) return;
@@ -309,40 +343,52 @@ function modal(title, body, confirm = 'Continue', initial = null) {
   });
 }
 async function newNotebook(example = false) {
-  const result = await api('/notebooks','POST', {name:example ? 'Getting started.jnb' : undefined});
+  const result = await api('/notebooks'+folderQuery(state.folder),'POST', {name:example ? 'Getting started.jnb' : undefined});
   await openNotebook(result.name);
   if (example) {
-    const n = active(); n.document.cells = [
-      cell('markdown','# Welcome to Java Lab\n\nA notebook is a conversation between your **ideas** and your **code**. Run each cell with **Shift + Enter**.\n\n- Java state is shared between cells in this notebook.\n- Each notebook has its own independent JShell kernel.\n- Your work is automatically saved in the working directory.'),
-      cell('code','// Start with a little Java\nString greeting = "Hello, Java Lab!";\nlog("%", greeting);'),
-      cell('markdown','## Build on what came before\n\nVariables live on between cells. No class declaration or `main` method needed. The result of the last statement is displayed automatically, while intermediate values stay quiet. Use `log(message, args...)` for additional text output — each `%` is replaced with the next object argument.'),
-      cell('code','List<Integer> numbers = List.of(2, 4, 6, 8, 10);\nint sum = numbers.stream().mapToInt(Integer::intValue).sum();\nlog("The sum of % numbers is %", numbers.size(), sum);\nsum'),
-      cell('markdown','## Make it your own\n\nDefine methods and classes, experiment with the standard library, and add Markdown notes along the way. Common `java.util`, `java.util.stream`, `java.time`, and `java.nio.file` imports are ready to use.'),
-      cell('code','String celebrate(String message) {\n    return message.toUpperCase() + " ✨";\n}\ncelebrate(greeting)'),
-      cell('markdown','## Charts with JFreeChart\n\nJFreeChart is bundled and ready to use. Build a dataset, create a chart, and call `Charts.show(chart)` to display a PNG in the notebook. Images are saved with your notebook and included in HTML exports. The chart classes and helper are already imported.'),
-      cell('code','var sales = new DefaultCategoryDataset();\nsales.addValue(12, "Sales", "Jan");\nsales.addValue(19, "Sales", "Feb");\nsales.addValue(15, "Sales", "Mar");\nvar salesChart = ChartFactory.createBarChart("Monthly sales · JFreeChart", "Month", "Sales", sales);\nCharts.show(salesChart, 900, 450);'),
-      cell('markdown','## Interactive charts with Apache ECharts\n\nBuild interactive charts with the fluent Java wrapper — no JSON text required. Use Java numbers, lists, and arrays directly. Hover for tooltips or click the legend to toggle a series. Charts are saved in the notebook and remain interactive in offline HTML exports.\n\nVibecode knows both chart APIs — try asking it to create a chart from your data.'),
-      cell('code','ECharts.chart()\n    .title("Monthly sales · Apache ECharts")\n    .categories("Jan", "Feb", "Mar", "Apr", "May", "Jun")\n    .yAxis("Sales")\n    .bar("Sales", 12, 19, 15, 23, 28, 31)\n    .series(ECharts.lineSeries("Target", 15, 17, 19, 21, 23, 25).smooth())\n    .size(900, 450)\n    .show();'),
-      cell('markdown','## Interactive tables with Grid.js\n\nBuild a searchable, sortable table directly from Java values. Grid.js is bundled and the `Grid` wrapper is pre-imported. Try searching for a month, sorting by sales, or switching pages. Tables persist with the notebook and stay interactive in offline HTML exports.\n\nVibecode knows this API too — ask it to turn your data into a table.'),
-      cell('code','Grid.table()\n    .title("Monthly sales · Grid.js")\n    .columns("Month", "Sales", "Target")\n    .row("Jan", 12, 15)\n    .row("Feb", 19, 17)\n    .row("Mar", 15, 19)\n    .row("Apr", 23, 21)\n    .row("May", 28, 23)\n    .row("Jun", 31, 25)\n    .search(true)\n    .sortable(true)\n    .pagination(3)\n    .show();'),
-      cell('markdown','### A few useful things\n\n- **Run all** executes cells from top to bottom and stops on an error.\n- **Restart kernel** clears Java session state.\n- Double-click a Markdown cell to edit with a live preview.\n- Press **Ctrl + Space** in a Java cell for completion.\n- Use **Export HTML** to share a beautifully formatted notebook.\n- Your `.jnb` file contains your code, notes, and saved outputs.')
-    ]; markDirty(n); renderCells(); await runAll(); await saveNotebook(n);
+    const n = active(); n.document.cells = window.gettingStartedCells(cell); markDirty(n); renderCells(); await runAll(); await saveNotebook(n);
   }
   await refreshFiles();
 }
-async function renameNotebook(name = active()?.name) {
+async function newFolder() {
+  const name=await modal('New folder','Choose a folder name. Folders can contain notebooks and data files.','Create folder','New folder');
+  if(!name)return;
+  const path=notebookPath(state.folder,name);
+  await api('/notebooks/folders','POST',{path});
+  await refreshFiles();notify('Folder created');
+}
+async function deleteFolder(path) {
+  if(!await modal('Delete empty folder?',`<strong>${escapeHtml(path)}</strong> must be empty before it can be deleted.`,'Delete'))return;
+  await api('/notebooks/folders?path='+encodeURIComponent(path),'DELETE');
+  await refreshFiles();notify('Folder deleted');
+}
+async function uploadDataFile(file) {
+  if(!file)return;
+  if(/\.(jnb|ipynb)$/i.test(file.name))throw new Error('Notebook import is not supported by file upload. Upload a data file instead.');
+  const body=new FormData();body.append('file',file);
+  const response=await fetch('/api/notebooks/uploads'+folderQuery(state.folder),{method:'POST',body});
+  if(!response.ok){let message=`Upload failed (${response.status})`;try{const error=await response.json();message=error.message||error.detail||message;}catch(_){}throw new Error(message);}
+  const result=await response.json();
+  await refreshFiles();
+  if(Array.isArray(result.preview) && result.preview.length){
+    const rows=result.preview.slice(0,21);
+    const table=`<div class="csv-preview"><table><thead><tr>${(rows[0]||[]).map(value=>`<th>${escapeHtml(value)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(row=>`<tr>${row.map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    await modal(`CSV preview · ${result.name}`,`<p>Uploaded to <code>${escapeHtml(result.path)}</code>. First ${rows.length-1} data rows:</p>${table}`,'Got it');
+  } else notify(`${result.name || file.name} uploaded`);
+}
+async function renameNotebook(name = active()?.name, folder = active()?.folder ?? state.folder) {
   if (!name) return;
   const newName = await modal('Rename notebook', 'Choose a name for your notebook.', 'Rename', name);
   if (!newName) return;
-  const n = state.notebooks.find(n => n.name === name);
+  const n = state.notebooks.find(n => n.path === notebookPath(folder,name));
   if (n) await saveNotebook(n);
-  const result = await api('/notebooks/'+encodeURIComponent(name),'PATCH',{name:newName});
-  if (n) n.name = result.name; await refreshFiles(); renderWorkspace();
+  const result = await api('/notebooks/'+encodeURIComponent(name)+folderQuery(folder),'PATCH',{name:newName});
+  if (n) {n.name = result.name; n.path = notebookPath(folder,result.name);} await refreshFiles(); renderWorkspace();
 }
-async function deleteNotebook(name) {
+async function deleteNotebook(name, folder = state.folder) {
   if (!await modal('Delete notebook?', `<strong>${escapeHtml(name)}</strong> will be permanently deleted from the working directory.`, 'Delete')) return;
-  const n = state.notebooks.find(n => n.name === name); if(n) {if(n.running) throw new Error('Interrupt execution before deleting this notebook.'); await closeNotebook(n);}
-  await api('/notebooks/'+encodeURIComponent(name),'DELETE'); await refreshFiles(); notify('Notebook deleted');
+  const n = state.notebooks.find(n => n.path === notebookPath(folder,name)); if(n) {if(n.running) throw new Error('Interrupt execution before deleting this notebook.'); await closeNotebook(n);}
+  await api('/notebooks/'+encodeURIComponent(name)+folderQuery(folder),'DELETE'); await refreshFiles(); notify('Notebook deleted');
 }
 function help() {
   const shortcuts=window.NotebookControls?.shortcuts||[];
@@ -352,6 +398,7 @@ function help() {
 }
 const actions = {
   new: () => newNotebook(), example: () => newNotebook(true), refresh:refreshFiles,
+  'new-folder':newFolder, upload:()=>$('#upload-input').click(),
   launcher: () => {state.launcher=true;renderWorkspace();},
   sidebar: () => {
     const sidebar = $('#sidebar');
@@ -360,7 +407,7 @@ const actions = {
   },
   save: () => saveNotebook(active(),true), rename: () => renameNotebook(), close: () => closeNotebook(active()),
   settings: () => window.NotebookSettings?.open(active()),
-  run: () => runSelected(), 'run-next': () => runSelected(true), 'run-all':runAll, restart:restartKernel,
+  run: () => runSelected(), 'run-next': () => runSelected(true), 'run-all':()=>runAll(), restart:()=>restartKernel(), 'restart-run-all':()=>restartKernel(true),
   interrupt: async () => {const n=active();if(n?.running){n.cancelRun=true;await api(`/kernels/${n.kernel}/interrupt`,'POST');notify('Interrupt requested');}},
   add: () => insertCell((active()?.selected ?? -1)+1), 'add-end': () => insertCell(active()?.document.cells.length || 0),
   duplicate: () => {const n=active();if(n && !n.running && n.document.cells[n.selected]){const copy=structuredClone(n.document.cells[n.selected]);copy.id=crypto.randomUUID();delete copy.busy;n.document.cells.splice(n.selected+1,0,copy);n.selected++;markDirty(n);renderCells();}},
@@ -379,9 +426,12 @@ document.addEventListener('click', async event => {
   $$('.menu').forEach(menu=>{if(menu!==menuTrigger?.parentElement)menu.classList.remove('open');});
   if(menuTrigger){menuTrigger.parentElement.classList.toggle('open');return;}
   $('.file-context')?.remove();
+  const formAction=target.closest('[data-form-action]');if(formAction){try{await applyFormAndRun(formAction);}catch(e){notify(e.message,true);}return;}
   const action = target.closest('[data-action]'); if(action){dispatch(action.dataset.action);return;}
   const close = target.closest('[data-close]'); if(close){try{await closeNotebook(state.notebooks.find(n=>n.uid===close.dataset.close));}catch(e){notify(e.message,true);}return;}
-  const file = target.closest('[data-file]'); if(file){try{await openNotebook(file.dataset.file);}catch(e){notify(e.message,true);}return;}
+  const folder = target.closest('[data-folder]'); if(folder){state.folder=folder.dataset.folder;await refreshFiles();return;}
+  if(target.closest('[data-parent-folder]')){state.folder=state.folder.split('/').slice(0,-1).join('/');await refreshFiles();return;}
+  const file = target.closest('[data-file]'); if(file){try{await openNotebook(file.dataset.file,file.dataset.fileFolder || '');}catch(e){notify(e.message,true);}return;}
   const tab = target.closest('[data-tab]'); if(tab){state.active=state.notebooks.find(n=>n.uid===tab.dataset.tab);state.launcher=false;renderWorkspace();return;}
   const panel = target.closest('[data-panel]'); if(panel){const type=panel.dataset.panel;const sidebar=$('#sidebar');sidebar.hidden=false;if(innerWidth<=760)sidebar.classList.toggle('revealed',state.panel!==type||!sidebar.classList.contains('revealed'));state.panel=type;$('#files-panel').hidden=type!=='files';$('#running-panel').hidden=type!=='running';$('#panel-title').textContent=type==='files'?'FILE BROWSER':'RUNNING KERNELS';$$('[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===type));return;}
   const element = target.closest('[data-cell]');
@@ -407,28 +457,31 @@ document.addEventListener('click', async event => {
   }
 });
 $('#file-search').addEventListener('input',renderFiles);
+$('#upload-input').addEventListener('change',event=>{const file=event.target.files?.[0];event.target.value='';uploadDataFile(file).catch(e=>notify(e.message,true));});
 function updateFormControl(control) {
   const n=active();if(!n)return;
   const values={...formValues(n)};
-  const value=control.dataset.formType==='checkbox'?control.checked:control.dataset.formType==='number'?(control.value===''?null:Number(control.value)):control.value;
+  const value=control.dataset.formType==='checkbox'?control.checked:control.dataset.formType==='multiselect'?[...control.selectedOptions].map(option=>option.value):control.dataset.formType==='number'?(control.value===''?null:Number(control.value)):control.value;
   if(typeof value==='number'&&!Number.isFinite(value))return;
   values[control.dataset.formField]=value;
   if(Object.keys(values).length>200 || JSON.stringify(values).length>100000){notify('Too many form values (maximum 200 fields / 100 KB).',true);renderCells();return;}
-  n.document.metadata ||= {};n.document.metadata.java_lab ||= {};n.document.metadata.java_lab.form_values=values;markDirty(n);
+  n.document.metadata ||= {};n.document.metadata.java_lab ||= {};n.document.metadata.java_lab.form_values=values;markDirty(n);markFollowingStale(n,Number(control.closest('[data-cell]').dataset.cell));
 }
 $('#cells').addEventListener('input',event=>{if(event.target.matches('.cell-editor textarea')){const n=active();const index=Number(event.target.closest('[data-cell]').dataset.cell);n.document.cells[index].source=[event.target.value];updateEditor(event.target);markDirty(n);}
-  const control=event.target.closest('.lab-form [data-form-field]');if(control && !['checkbox','select'].includes(control.dataset.formType))updateFormControl(control);
+  const control=event.target.closest('.lab-form [data-form-field]');if(control && !['checkbox','select','multiselect','date'].includes(control.dataset.formType))updateFormControl(control);
 });
-$('#cells').addEventListener('change',event=>{const control=event.target.closest('.lab-form [data-form-field]');if(control && ['checkbox','select'].includes(control.dataset.formType))updateFormControl(control);});
+$('#cells').addEventListener('change',event=>{const control=event.target.closest('.lab-form [data-form-field]');if(control && ['checkbox','select','multiselect','date'].includes(control.dataset.formType))updateFormControl(control);});
 $('#cells').addEventListener('error',event=>{if(event.target.matches?.('img.chart-image')){const message=document.createElement('div');message.className='chart-render-error';message.textContent='Chart image could not be displayed. Rerun this cell to regenerate it.';event.target.replaceWith(message);}},true);
 $('#cells').addEventListener('scroll',event=>{if(event.target.matches('textarea')){const pre=$('.highlight-layer pre',event.target.parentElement);if(pre)pre.style.transform=`translate(${-event.target.scrollLeft}px,${-event.target.scrollTop}px)`;}},true);
 $('#cells').addEventListener('focusin',event=>{const el=event.target.closest('[data-cell]');if(el&&event.target.matches('.cell-editor textarea')){selectCell(Number(el.dataset.cell));window.NotebookControls?.setEditing();}});
 $('#cells').addEventListener('dblclick',event=>{const el=event.target.closest('.markdown-render');if(el){const n=active();n.document.cells[n.selected].editing=true;renderCells();selectCell(n.selected,true);}});
 $('#cell-type').addEventListener('change',event=>{if(window.NotebookControls)NotebookControls.changeType(event.target.value);});
 $('#file-list').addEventListener('contextmenu',event=>{
+  const folder=event.target.closest('[data-folder]');
+  if(folder){event.preventDefault();$('.file-context')?.remove();const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button type="button">Delete empty folder</button>';document.body.append(menu);menu.addEventListener('click',()=>{menu.remove();deleteFolder(folder.dataset.folder).catch(e=>notify(e.message,true));});return;}
   const file=event.target.closest('[data-file]');if(!file)return;event.preventDefault();$('.file-context')?.remove();
   const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-160)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button data-context="rename">Rename notebook</button><button data-context="delete">Delete notebook</button>';document.body.append(menu);
-  menu.addEventListener('click',event=>{const action=event.target.dataset.context;menu.remove();(action==='rename'?renameNotebook(file.dataset.file):deleteNotebook(file.dataset.file)).catch(e=>notify(e.message,true));});
+  menu.addEventListener('click',event=>{const action=event.target.dataset.context;menu.remove();(action==='rename'?renameNotebook(file.dataset.file,file.dataset.fileFolder):deleteNotebook(file.dataset.file,file.dataset.fileFolder)).catch(e=>notify(e.message,true));});
 });
 window.addEventListener('beforeunload',event=>{if(state.notebooks.some(n=>n.dirty||n.running)){event.preventDefault();event.returnValue='';}});
 window.addEventListener('pagehide',()=>{for(const n of state.notebooks){if(n.kernel)fetch(`/api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});

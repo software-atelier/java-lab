@@ -52,7 +52,7 @@
   const error=document.querySelector('#settings-error');
   let notebook=null, status=new Map(), initialPending=false, applying=false;
   const html=value=>escapeHtml(value);
-  const path=n=>'/notebooks/'+encodeURIComponent(n.name)+'/values';
+  const path=n=>'/notebooks/'+encodeURIComponent(n.name)+'/values'+folderQuery(n.folder);
   function statusLabel(name) {
     return {override:'Local value set',environment:'Environment value set',default:'Document default',unset:'Not set'}[status.get(name)]||'Not set';
   }
@@ -137,7 +137,7 @@
       }
       if(n.dirty||n.savePromise)await saveNotebook(n);
       if(valuesChanged)await api(path(n),'PUT',{values:next.values,clear:next.clear});
-      const replacement=await api('/kernels','POST',{notebook:n.name});
+      const replacement=await api('/kernels','POST',{notebook:n.path});
       const previousKernel=n.kernel;n.kernel=replacement.id;n.configPending=false;
       dialog.close();reset();updateStatus();
       if(previousKernel)api(`/kernels/${previousKernel}`,'DELETE').catch(e=>notify('Old kernel cleanup failed: '+e.message,true));

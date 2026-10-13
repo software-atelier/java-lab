@@ -200,7 +200,7 @@ window.NotebookControls = (() => {
     palette:()=>showPalette(),find:()=>showSearch(false),'find-replace':()=>showSearch(true),
     'find-next':()=>findMatch(1),'find-previous':()=>findMatch(-1),'save-as':()=>saveAs(),
     'simple-mode':()=>document.body.classList.toggle('simple-interface'),
-    'next-tab':()=>switchTab(1),'previous-tab':()=>switchTab(-1),'reopen-tab':()=>{const name=closedTabs.pop();if(name)return openNotebook(name);},
+    'next-tab':()=>switchTab(1),'previous-tab':()=>switchTab(-1),'reopen-tab':()=>{const last=closedTabs.pop();if(last)return openNotebook(last.name,last.folder);},
     'file-browser':()=>{const button=$('[data-panel="files"]');button.click();$('#file-search').focus();},
     print:()=>window.print()
   };
@@ -217,7 +217,7 @@ window.NotebookControls = (() => {
   ];
   async function perform(name){try{await (commands[name]||actions[name])?.();}catch(e){notify(e.message,true);}}
   function switchTab(direction){const list=state.notebooks;if(!list.length)return;const i=list.indexOf(state.active);state.active=list[(i+direction+list.length)%list.length];state.launcher=false;renderWorkspace();command();}
-  async function saveAs(){const n=active();if(!n)return;const name=await modal('Save notebook as','Choose a filename for a copy of this notebook.','Save as',n.name);if(!name)return;const created=await api('/notebooks','POST',{name});await api('/notebooks/'+encodeURIComponent(created.name),'PUT',notebookSnapshot(n.document));await refreshFiles();await openNotebook(created.name);}
+  async function saveAs(){const n=active();if(!n)return;const name=await modal('Save notebook as','Choose a filename for a copy of this notebook.','Save as',n.name);if(!name)return;const created=await api('/notebooks'+folderQuery(n.folder),'POST',{name});await api('/notebooks/'+encodeURIComponent(created.name)+folderQuery(n.folder),'PUT',notebookSnapshot(n.document));await refreshFiles();await openNotebook(created.name,n.folder);}
   function paletteItems(){const query=$('#palette-query').value.toLowerCase().split(/\s+/).filter(Boolean);return paletteCommands.filter(([,label])=>query.every(word=>label.toLowerCase().includes(word)));}
   function renderPalette(){const items=paletteItems();paletteIndex=Math.max(0,Math.min(paletteIndex,items.length-1));$('#palette-list').innerHTML=items.map(([name,label],i)=>`<button type="button" role="option" aria-selected="${i===paletteIndex}" class="palette-item ${i===paletteIndex?'active':''}" data-palette-command="${name}">${escapeHtml(label)}</button>`).join('')||'<div class="empty-files">No matching commands.</div>';$('.palette-item.active')?.scrollIntoView({block:'nearest'});}
   function showPalette(){resetSequence();paletteIndex=0;$('#palette-query').value='';renderPalette();$('#command-palette').showModal();$('#palette-query').focus();}
@@ -253,9 +253,9 @@ window.NotebookControls = (() => {
     if(event.key==='Escape'&&$('.menu.open')){consume(event);$$('.menu').forEach(menu=>menu.classList.remove('open'));if(n)command(n);return;}
     const file=event.target.closest?.('#file-list [data-file]');
     if(file) {
-      if(event.key==='F2'){consume(event);renameNotebook(file.dataset.file).catch(e=>notify(e.message,true));return;}
-      if(event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file).catch(e=>notify(e.message,true));return;}
-      if(accel&&key==='d'){consume(event);(async()=>{const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file));const copy=await api('/notebooks','POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
+      if(event.key==='F2'){consume(event);renameNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
+      if(event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
+      if(accel&&key==='d'){consume(event);(async()=>{const folder=file.dataset.fileFolder || '';const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file)+folderQuery(folder));const copy=await api('/notebooks'+folderQuery(folder),'POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name)+folderQuery(folder),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
       if(['ArrowUp','ArrowDown'].includes(event.key)){consume(event);const files=$$('#file-list [data-file]'),i=files.indexOf(file),next=Math.max(0,Math.min(i+(event.key==='ArrowUp'?-1:1),files.length-1));files[next]?.focus();return;}
     }
     if(accel&&event.shiftKey&&(key==='c'||key==='p')){consume(event);showPalette();return;}
@@ -323,12 +323,12 @@ window.NotebookControls = (() => {
       :{a:'insert-above',b:'insert-below',y:'code-cell',m:'markdown-cell',r:'raw-cell',t:'raw-cell',x:'cut-cell',c:'copy-cell',v:'paste-cell',z:'undo-cell',l:'line-numbers',o:'toggle-outputs',s:'save',h:'help'}[key];
     if(action||event.key==='?'){consume(event);perform(action||'help');}
   },true);
-  $('#cells').addEventListener('beforeinput',event=>{if(event.target.matches('textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];textState(n,c).draft={value:event.target.value,start:event.target.selectionStart,end:event.target.selectionEnd};}});
+  $('#cells').addEventListener('beforeinput',event=>{if(event.target.matches('.cell-editor textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];textState(n,c).draft={value:event.target.value,start:event.target.selectionStart,end:event.target.selectionEnd};}});
   document.addEventListener('pointerdown',resetSequence);
-  $('#cells').addEventListener('input',event=>{if(event.target.matches('textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];observeText(n,c,event.target);syncLineNumbers(event.target);}});
+  $('#cells').addEventListener('input',event=>{if(event.target.matches('.cell-editor textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];observeText(n,c,event.target);syncLineNumbers(event.target);}});
   Object.assign(actions,commands);
   return {shortcuts,indexes,selected,command,edit,paint,decorate,insert,changeType,perform,resetSequence,
-    closed:n=>{closedTabs.push(n.name);if(closedTabs.length>20)closedTabs.shift();},
+    closed:n=>{closedTabs.push({name:n.name,folder:n.folder});if(closedTabs.length>20)closedTabs.shift();},
     restoreFocus:()=>{const n=active();if(n)nstate(n).mode==='edit'?edit(n):focusCommand(n);},
     clicked:(event,index)=>{const n=active();if(!n)return;const s=nstate(n);selected(n,index,event.shiftKey&&!event.target.matches('textarea'),false);if(event.target.matches('textarea')){s.mode='edit';paint(n);updateStatus();}else if(event.target.closest('input,button,select,a,.echarts-chart,.grid-table'))command(n,false);else command(n);},
     setEditing:()=>{const n=active();if(n){nstate(n).mode='edit';paint(n);}},

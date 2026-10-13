@@ -62,12 +62,12 @@ For development: `mvn spring-boot:run`. Tests: `mvn test`.
 - **Outputs:** the result of the last statement is displayed automatically. Intermediate values stay quiet; charts and tables use their rich renderers. `log(...)`, console streams, compilation diagnostics, and runtime errors are also displayed.
 - **Inline charts:** bundled JFreeChart 1.5.6 renders PNG charts, and Apache ECharts 6.0.0 renders interactive browser charts. Both persist with notebooks and are included in standalone HTML exports.
 - **Interactive tables:** bundled Grid.js 6.2.0 provides searching, sorting, and pagination through a fluent Java wrapper, with persistence and offline HTML export.
-- **Execution controls:** run selected cell, run and advance, run all (stops on error), interrupt, and restart kernel.
+- **Execution controls:** run selected cell, run and advance, run all (stops on error), interrupt, restart kernel, and **Restart & run all** to rebuild Java state after a refresh or timeout.
 - **Editing:** insert, duplicate, reorder, delete, change cell type, and clear outputs. Double-click rendered Markdown to edit it.
-- **Files:** create, filter, open, rename, delete, and download notebooks. Right-click a file for rename/delete actions.
+- **Files:** create, filter, open, rename, delete, and download notebooks in nested workspace folders. Create and delete empty folders, and upload data files; CSV uploads show a preview.
 - **Beautiful HTML export:** **Export HTML** in the toolbar or **File → Export as HTML** downloads a standalone document with a styled cover, Markdown, syntax-highlighted Java, line numbers, and saved outputs. All styling is embedded; the exported file opens offline without the server. Responsive and print-friendly layouts are included.
 - **Autosave:** saves 1.2 seconds after an edit, with explicit save available. Changes, notes, and outputs persist to disk using atomic replacement where supported.
-- **Getting started:** the introduction launcher card creates and runs a 13-cell sample notebook with logging, last-result display, JFreeChart, Apache ECharts, and Grid.js examples. Click **A quick introduction** to create a fresh copy of the latest version.
+- **Getting started:** the introduction launcher card creates and runs a sample notebook covering logging, Java state, formatted output, an interactive form, JSON/CSV, JFreeChart, Apache ECharts, and Grid.js. Click **A quick introduction** to create a fresh copy of the latest version.
 
 ### Jupyter-style keyboard controls
 
@@ -184,16 +184,21 @@ Formatted.show("sql", "select * from people where active = true;");
 
 `Formatted.json`, `.yaml`, `.xml`, and `.code(format, content)` are convenient aliases. `show` preserves whitespace. `prettyJson` validates and indents JSON objects/arrays; `prettyYaml` parses YAML safely and emits indented block-style YAML; `prettyXml` indents XML using a parser that rejects DTDs and external entities. Invalid or unsafe input produces a cell error. YAML reformatting may normalize scalar quoting and discard comments. Each call creates a saved notebook output and appears in offline HTML exports.
 
+JSON and XML outputs also have a collapsible structured explorer. Use **Copy** to copy the source text or **Download** to save it as a file. The source remains available beneath the explorer.
+
 Create interactive inputs from Java code with the pre-imported `Forms` helper:
 
 ```java
 Forms.form("preferences")
     .title("Preferences")
-    .text("name", "Name", "Ada")
+    .text("name", "Name", "Ada").required("name")
     .select("role", "Role", "reader", "admin")
     .checkbox("enabled", "Enabled", true)
-    .number("threshold", "Threshold", 10)
+    .number("threshold", "Threshold", 10).range("threshold", 0, 100)
     .textarea("notes", "Notes", "")
+    .email("email", "Email")
+    .date("due", "Due date")
+    .multiselect("topics", "Topics", "Java", "CSV", "Charts")
     .show();
 ```
 
@@ -203,9 +208,10 @@ In a later cell, read the current values:
 log("% (%): %", Forms.text("name"), Forms.text("role"), Forms.bool("enabled"));
 double threshold = Forms.number("threshold");
 Object raw = Forms.value("notes");
+List<String> topics = Forms.list("topics");
 ```
 
-Form and field IDs must start with a letter and contain letters, numbers, `_`, `.`, or `-` (maximum 100 characters). Field IDs identify values across the notebook, so use distinct IDs across forms. A rerun of the form cell preserves values already entered. Values are synchronized into the kernel before each later cell executes and are stored with the notebook; as with other Java state, restart/reopen requires rerunning code cells to recreate variables. Exported HTML displays saved form output but cannot execute later Java cells. Limits are 100 fields per form, 200 values per execution request, 100 KB of serialized values, and 16 total rich displays per snippet.
+The form supports text, textarea, number, single/multi-select, checkbox, email, and date fields. `.required(id)` marks a field mandatory, and `.range(id, min, max)` constrains a number field. Invalid input is shown at the field and rejected by the kernel before later code executes. After changing values, click **Apply values & run following cells** on the form. Saved dependent outputs are marked stale until rerun. Form and field IDs must start with a letter and contain letters, numbers, `_`, `.`, or `-` (maximum 100 characters). Field IDs identify values across the notebook, so use distinct IDs across forms. A rerun of the form cell preserves values already entered. Values are synchronized into the kernel before each later cell executes and are stored with the notebook; as with other Java state, restart/reopen requires rerunning code cells to recreate variables. Exported HTML displays saved form output but cannot execute later Java cells. Limits are 100 fields per form, 200 values per execution request, 100 KB of serialized values, and 16 total rich displays per snippet.
 
 ## JSON and CSV
 
@@ -480,7 +486,9 @@ Instructions are limited to 10,000 characters and cell sources/replacements to 1
 
 New notebooks use **`.jnb` (Java notebook)**. Their JSON structure retains the nbformat 4 cell and output model, with Java language metadata and a Java Lab format version, so the contents remain easy to inspect and process. Existing metadata is retained.
 
-The file browser lists `.jnb` and legacy `.ipynb` files directly in the working directory; nested folders are not currently browsed. Existing `.ipynb` files can still be opened and saved under their original names. Renaming a legacy notebook converts its extension to `.jnb`; downloading it also uses `.jnb`. Files are not automatically renamed on startup. Symbolic-link notebook files and directory traversal are rejected.
+The file browser lists `.jnb` and legacy `.ipynb` files in the working directory and nested folders. Create folders from the file browser and open them to keep notebooks and uploaded data together. Empty folders can be deleted. Existing `.ipynb` files can still be opened and saved under their original names. Renaming a legacy notebook converts its extension to `.jnb`; downloading it also uses `.jnb`. Files are not automatically renamed on startup. Symbolic-link notebook files/folders and directory traversal are rejected.
+
+Use **Upload file** in the file browser to place a data file in the current folder. CSV uploads display the header and up to 20 data rows (up to 30 columns) before you use the file from Java with `Path.of(...)`. The upload limit is **10 MB**; upload filenames cannot contain path separators or be notebook files (`.jnb`/`.ipynb`). Existing filenames are given a numeric suffix rather than overwritten. Uploaded files are local workspace data, not embedded in a notebook or its HTML export.
 
 HTML export is a read-only presentation of the current saved notebook, including its stored outputs; exporting does not run any cells. Raw HTML in Markdown and code/output text is escaped. Live Java sessions remain in Java Lab.
 
@@ -500,6 +508,8 @@ src/main/java/ch/software_atelier/java_lab/
   display/Logs.java                  Parameterized logging behind the notebook log function
   display/ECharts.java               Fluent Java chart/series wrapper and display helper
   display/Grid.java                  Fluent Java Grid.js table/column wrapper
+  display/Formatted.java             Safe highlighted JSON/YAML/XML and code output
+  display/Forms.java                 Kernel-local interactive form builder and values
   display/JsonOptions.java           Shared JSON serialization for display wrappers
   display/Display.java               Shared typed chart output transport
   KernelController.java              Kernel REST API
@@ -511,6 +521,8 @@ src/main/resources/static/
   editor.css                         Highlighting, preview, completion styling
   editor.js                          Completion popup and keyboard interaction
   presentation.js                    Shared rendering and standalone HTML export
+  getting-started.js                 Runnable introduction notebook
+  output-explorer.css                Structured JSON/XML output explorer
   charts.js                          ECharts rendering, resizing, disposal, and export assets
   tables.js / tables.css             Grid.js rendering, disposal, styling, and export assets
   notebook-model.js                  Cell selection, clipboard data, structural undo/redo
@@ -524,13 +536,16 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| GET | `/api/notebooks` | Working directory and notebook listing |
-| POST | `/api/notebooks` | Create; optional `{ "name": "Example.jnb" }` |
-| GET / PUT / DELETE | `/api/notebooks/{name}` | Read / save notebook JSON / delete |
-| PATCH | `/api/notebooks/{name}` | Rename with `{ "name": "New.jnb" }` |
-| GET / PUT | `/api/notebooks/{name}/values` | Inspect value sources / set or clear local values without returning their contents |
-| POST | `/api/kernels` | Create an independent Java kernel; pass `{ "notebook": "Example.jnb" }` for its variables and Maven dependencies |
-| POST | `/api/kernels/{id}/execute` | Execute `{ "code": "1 + 1" }` |
+| GET | `/api/notebooks?folder=Projects` | Working directory, notebook listing, and child folders; omit `folder` for workspace root |
+| POST | `/api/notebooks?folder=Projects` | Create; optional `{ "name": "Example.jnb" }` |
+| GET / PUT / DELETE | `/api/notebooks/{name}?folder=Projects` | Read / save notebook JSON / delete |
+| PATCH | `/api/notebooks/{name}?folder=Projects` | Rename with `{ "name": "New.jnb" }` |
+| GET / PUT | `/api/notebooks/{name}/values?folder=Projects` | Inspect value sources / set or clear local values without returning their contents |
+| POST | `/api/notebooks/folders` | Create `{ "path": "Projects/2026" }` |
+| PATCH / DELETE | `/api/notebooks/folders?path=Projects/2026` | Rename an empty folder with `{ "name": "New name" }` / delete an empty folder |
+| POST | `/api/notebooks/uploads?folder=Projects` | Multipart `file`; returns stored name/path/size and CSV preview rows |
+| POST | `/api/kernels` | Create an independent Java kernel; pass `{ "notebook": "Projects/Example.jnb" }` for its variables and Maven dependencies |
+| POST | `/api/kernels/{id}/execute` | Execute `{ "code": "1 + 1", "formValues": { "name": "Ada" } }` |
 | POST | `/api/kernels/{id}/complete` | Analyze `{ "code": "System.out.pr", "cursor": 13 }`; returns replacement anchor and suggestions |
 | POST | `/api/kernels/{id}/inspect` | Return Java signatures at the cursor without executing code |
 | POST | `/api/kernels/{id}/interrupt` | Interrupt current execution |

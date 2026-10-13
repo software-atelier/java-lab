@@ -11,12 +11,15 @@
   <link rel="stylesheet" href="/tables.css">
   <link rel="stylesheet" href="/notebook-controls.css">
   <link rel="stylesheet" href="/notebook-settings.css">
+  <link rel="stylesheet" href="/output-explorer.css">
+  <link rel="stylesheet" href="/workspace-features.css">
   <script src="/webjars/gridjs/6.2.0/dist/gridjs.umd.js" defer></script>
   <script src="/tables.js" defer></script>
   <script src="/webjars/echarts/6.0.0/dist/echarts.min.js" defer></script>
   <script src="/charts.js" defer></script>
   <script src="/presentation.js" defer></script>
   <script src="/notebook-model.js" defer></script>
+  <script src="/getting-started.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/notebook-settings.js" defer></script>
   <script src="/editor.js" defer></script>
@@ -48,10 +51,10 @@
   <a class="brand" href="/" aria-label="Java Lab home"><span class="brand-mark">J<span>·</span></span><strong>java<span>lab</span></strong></a>
   <nav aria-label="Application menu">
     <div class="menu"><button class="menu-trigger">File</button><div class="menu-popup">
-      <button data-action="new">New notebook <kbd>Alt N</kbd></button><button data-action="save">Save notebook <kbd>⌘ / Ctrl S</kbd></button><button data-action="rename">Rename notebook</button><button data-action="settings">Notebook settings…</button><hr><button data-action="export-html">Export as HTML (with outputs)</button><button data-action="download">Download share-safe notebook (.jnb)</button><hr><button data-action="close">Close tab</button>
+      <button data-action="new">New notebook <kbd>Alt N</kbd></button><button data-action="new-folder">New folder</button><button data-action="upload">Upload file…</button><button data-action="save">Save notebook <kbd>⌘ / Ctrl S</kbd></button><button data-action="rename">Rename notebook</button><button data-action="settings">Notebook settings…</button><hr><button data-action="export-html">Export as HTML (with outputs)</button><button data-action="download">Download share-safe notebook (.jnb)</button><hr><button data-action="close">Close tab</button>
     </div></div>
     <div class="menu"><button class="menu-trigger">Edit</button><div class="menu-popup"><button data-action="undo-cell">Undo cell action <kbd>Z</kbd></button><button data-action="redo-cell">Redo cell action <kbd>Shift Z</kbd></button><hr><button data-action="cut-cell">Cut cells <kbd>X</kbd></button><button data-action="copy-cell">Copy cells <kbd>C</kbd></button><button data-action="paste-cell">Paste cells below <kbd>V</kbd></button><button data-action="add">Insert cell below <kbd>B</kbd></button><button data-action="duplicate">Duplicate cells</button><button data-action="delete-cell">Delete cells <kbd>D D</kbd></button><button data-action="merge-cells">Merge cells <kbd>Shift M</kbd></button><button data-action="split-cell">Split cell <kbd>Ctrl Shift -</kbd></button><hr><button data-action="clear">Clear all outputs</button></div></div>
-    <div class="menu"><button class="menu-trigger">Run</button><div class="menu-popup"><button data-action="run">Run selected cell <kbd>Ctrl Enter</kbd></button><button data-action="run-next">Run and select next <kbd>Shift Enter</kbd></button><button data-action="run-all">Run all cells</button><hr><button data-action="interrupt">Interrupt kernel</button><button data-action="restart">Restart kernel</button></div></div>
+    <div class="menu"><button class="menu-trigger">Run</button><div class="menu-popup"><button data-action="run">Run selected cell <kbd>Ctrl Enter</kbd></button><button data-action="run-next">Run and select next <kbd>Shift Enter</kbd></button><button data-action="run-all">Run all cells</button><hr><button data-action="interrupt">Interrupt kernel</button><button data-action="restart">Restart kernel</button><button data-action="restart-run-all">Restart kernel &amp; run all</button></div></div>
     <div class="menu"><button class="menu-trigger">View</button><div class="menu-popup"><button data-action="palette">Command palette <kbd>Ctrl / ⌘ Shift C</kbd></button><button data-action="find">Find notebook source <kbd>Ctrl / ⌘ F</kbd></button><button data-action="line-numbers">Toggle cell line numbers <kbd>L</kbd></button><button data-action="toggle-outputs">Toggle selected outputs <kbd>O</kbd></button><button data-action="sidebar">Toggle file browser</button><button data-action="launcher">Open launcher</button></div></div>
     <div class="menu"><button class="menu-trigger">Help</button><div class="menu-popup"><button data-action="help">Keyboard shortcuts & about</button></div></div>
   </nav>
@@ -67,8 +70,8 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-heading"><span id="panel-title">FILE BROWSER</span><button class="icon-button" data-action="refresh" title="Refresh files" aria-label="Refresh files"><svg><use href="#i-refresh"/></svg></button></div>
     <div id="files-panel">
-      <div class="file-actions"><button class="primary small" data-action="new"><svg><use href="#i-plus"/></svg> New notebook</button><button class="icon-button" data-action="launcher" title="Open launcher" aria-label="Open launcher"><svg><use href="#i-grid"/></svg></button></div>
-      <div class="breadcrumb"><svg><use href="#i-folder"/></svg><span title="Notebooks are stored in the current working directory">Working directory</span></div>
+      <div class="file-actions"><button class="primary small" data-action="new"><svg><use href="#i-plus"/></svg> New notebook</button><button class="icon-button" data-action="new-folder" title="New folder" aria-label="New folder"><svg><use href="#i-folder"/></svg></button><button class="icon-button" data-action="upload" title="Upload file" aria-label="Upload file">↑</button></div>
+      <div class="breadcrumb"><svg><use href="#i-folder"/></svg><span id="folder-path" title="Current notebook folder">Working directory</span></div>
       <label class="search"><svg><use href="#i-search"/></svg><input id="file-search" placeholder="Filter notebooks…" aria-label="Filter notebooks"></label>
       <div class="file-list-header"><span>Name</span><span>Modified</span></div><div id="file-list"></div>
       <div class="sidebar-note"><span class="tiny-dot"></span> Files saved directly to disk <div id="directory" title="Current working directory"></div></div>
@@ -96,7 +99,7 @@
     <section id="notebook" hidden>
       <div class="notebook-toolbar">
         <div class="toolbar-group"><button class="icon-button" data-action="save" title="Save (Ctrl / ⌘ S)" aria-label="Save"><svg><use href="#i-save"/></svg></button><button class="icon-button" data-action="add" title="Insert cell below" aria-label="Insert cell"><svg><use href="#i-plus"/></svg></button></div>
-        <div class="toolbar-group"><button class="run-button" data-action="run-next" title="Run and select next (Shift Enter)"><svg><use href="#i-play"/></svg> Run</button><button class="icon-button" data-action="interrupt" title="Interrupt kernel" aria-label="Interrupt kernel"><svg><use href="#i-stop"/></svg></button><button class="icon-button" data-action="restart" title="Restart kernel" aria-label="Restart kernel"><svg><use href="#i-refresh"/></svg></button><button class="text-button run-all" data-action="run-all">Run all</button></div>
+        <div class="toolbar-group"><button class="run-button" data-action="run-next" title="Run and select next (Shift Enter)"><svg><use href="#i-play"/></svg> Run</button><button class="icon-button" data-action="interrupt" title="Interrupt kernel" aria-label="Interrupt kernel"><svg><use href="#i-stop"/></svg></button><button class="icon-button" data-action="restart" title="Restart kernel" aria-label="Restart kernel"><svg><use href="#i-refresh"/></svg></button><button class="text-button run-all" data-action="run-all">Run all</button><button class="text-button restart-run-all" data-action="restart-run-all">Restart &amp; run all</button></div>
         <div class="toolbar-group"><select id="cell-type" aria-label="Cell type"><option value="code">Code</option><option value="markdown">Markdown</option><option value="raw">Raw</option></select></div>
         <button class="text-button vibe-button" data-action="vibecode" title="Generate or edit the selected Java cell with AI">✦ Vibecode</button>
         <span class="toolbar-spacer"></span><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button export-button" data-action="export-html" title="Download a styled, standalone HTML notebook">Export HTML ↗</button><span id="save-state" class="save-state"></span><span class="kernel-indicator"><span id="kernel-dot"></span> Java <span class="kernel-engine">JShell</span></span>
@@ -106,7 +109,8 @@
     </section>
   </main>
 </div>
-<footer class="statusbar"><span><span class="status-dot"></span><span id="connection-state">Connecting…</span></span><span id="status-message">Java Lab</span><span class="status-spacer"></span><span id="notebook-mode" hidden></span><span id="cell-position"></span><span id="kernel-status">Java · JShell</span><span class="status-version">v1.2.0</span></footer>
+<footer class="statusbar"><span><span class="status-dot"></span><span id="connection-state">Connecting…</span></span><span id="status-message">Java Lab</span><span class="status-spacer"></span><span id="notebook-mode" hidden></span><span id="cell-position"></span><span id="kernel-status">Java · JShell</span><span class="status-version">v1.3.0</span></footer>
+<input id="upload-input" type="file" hidden aria-label="Upload data file">
 <div id="toast" class="toast" role="status" hidden></div>
 <dialog id="command-palette"><div class="dialog-heading"><h2>Command palette</h2><button type="button" id="palette-close" class="icon-button" aria-label="Close command palette">×</button></div><input id="palette-query" placeholder="Search commands…" aria-label="Search commands" autocomplete="off"><div id="palette-list" role="listbox" aria-label="Commands"></div></dialog>
 <dialog id="modal"><form id="modal-form"><div class="dialog-heading"><h2 id="modal-title"></h2><button type="button" class="icon-button" id="modal-close" aria-label="Close dialog"><svg><use href="#i-close"/></svg></button></div><div id="modal-body"></div><div class="dialog-actions"><button type="button" class="secondary" id="modal-cancel">Cancel</button><button class="primary" id="modal-submit">Continue</button></div></form></dialog>

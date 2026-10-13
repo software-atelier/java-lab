@@ -70,7 +70,8 @@ public class KernelService implements AutoCloseable {
             if (formValues.size() > 200) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Too many form values");
             for (var entry : formValues.entrySet()) {
                 if (entry.getKey() == null || !entry.getKey().matches("[A-Za-z][A-Za-z0-9_.-]{0,99}")
-                    || !(entry.getValue() == null || entry.getValue() instanceof String || entry.getValue() instanceof Boolean || entry.getValue() instanceof Number))
+                    || !(entry.getValue() == null || entry.getValue() instanceof String || entry.getValue() instanceof Boolean || entry.getValue() instanceof Number
+                        || entry.getValue() instanceof List<?> items && items.size() <= 100 && items.stream().allMatch(String.class::isInstance)))
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid form value");
             }
             try {

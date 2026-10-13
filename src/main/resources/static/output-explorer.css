@@ -1,0 +1,16 @@
+.formatted-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.formatted-actions { display: flex; gap: 6px; }
+.formatted-actions button { font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; color: #536174; border: 1px solid #d8dfe8; border-radius: 4px; background: #fff; padding: 3px 8px; cursor: pointer; }
+.formatted-actions button:hover { background: #edf4f7; }
+.structured-explorer { max-height: 450px; overflow: auto; padding: 9px 12px; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.output-tree-node { margin: 2px 0; }
+.output-tree-node summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.output-tree-children { margin-left: 14px; padding-left: 9px; border-left: 1px solid #d8dfe8; }
+.output-tree-leaf { white-space: pre-wrap; overflow-wrap: anywhere; }
+.output-tree-key { color: #9560ad; }
+.output-tree-type { color: #75808f; }
+.output-tree-value { color: #428777; }
+.formatted-code > summary { cursor: pointer; border-top: 1px solid #e5e9ee; padding: 5px 12px; color: #75808f; font-size: 11px; }
+.formatted-code:not([open]) pre { display: none; }
+.formatted-output pre.formatted-source { white-space: pre; overflow: auto; }
+@media print { .formatted-actions { display: none; } .structured-explorer { max-height: none; overflow: visible; } }

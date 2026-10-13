@@ -124,7 +124,76 @@ window.LabPresentation = (() => {
   const codeMime = 'application/vnd.java-lab.code+json';
   const formMime = 'application/vnd.java-lab.form+json';
   const codeFormats = new Set(['json','yaml','xml','html','css','javascript','java','sql','markdown','csv','text']);
-  const formTypes = new Set(['text','textarea','number','checkbox','select']);
+  const formTypes = new Set(['text','textarea','number','checkbox','select','email','date','multiselect']);
+  // The tree is deliberately bounded: large or malformed documents remain readable as code.
+  const treeLimit = 1000, treeDepth = 32;
+  function jsonTree(value) {
+    let count = 0;
+    function node(item, label, depth) {
+      if (++count > treeLimit || depth > treeDepth) throw new Error('Tree too large');
+      const prefix = label === null ? '' : `<span class="output-tree-key">${escape(label)}</span>: `;
+      if (item && typeof item === 'object') {
+        const entries = Object.entries(item);
+        const type = Array.isArray(item) ? 'Array' : 'Object';
+        return `<details class="output-tree-node" ${depth === 0 ? 'open' : ''}><summary>${prefix}<span class="output-tree-type">${type} (${entries.length})</span></summary><div class="output-tree-children">${entries.map(([key, child]) => node(child, key, depth + 1)).join('')}</div></details>`;
+      }
+      return `<div class="output-tree-leaf">${prefix}<span class="output-tree-value">${escape(JSON.stringify(item))}</span></div>`;
+    }
+    return node(value, null, 0);
+  }
+  function xmlTree(source) {
+    if (typeof DOMParser === 'undefined' || /<!\s*(?:DOCTYPE|ENTITY)\b/i.test(source)) return '';
+    const doc = new DOMParser().parseFromString(source, 'application/xml');
+    if (doc.querySelector('parsererror')) return '';
+    let count = 0;
+    function node(item, depth) {
+      if (++count > treeLimit || depth > treeDepth) throw new Error('Tree too large');
+      if (item.nodeType === 3 || item.nodeType === 4) {
+        const value = item.nodeValue.trim();
+        return value ? `<div class="output-tree-leaf output-tree-value">${escape(value)}</div>` : '';
+      }
+      if (item.nodeType !== 1) return '';
+      const attributes = Array.from(item.attributes).map(attr => ` <span class="output-tree-key">${escape(attr.name)}</span>=<span class="output-tree-value">&quot;${escape(attr.value)}&quot;</span>`).join('');
+      const children = Array.from(item.childNodes).map(child => node(child, depth + 1)).join('');
+      return `<details class="output-tree-node" ${depth === 0 ? 'open' : ''}><summary>&lt;<span class="output-tree-key">${escape(item.tagName)}</span>${attributes}&gt;</summary><div class="output-tree-children">${children}</div></details>`;
+    }
+    try { return node(doc.documentElement, 0); } catch (_) { return ''; }
+  }
+  // This handler contains no notebook data. It also runs in standalone HTML exports.
+  function installOutputActions() {
+    document.addEventListener('click', async function(event) {
+    const button = event.target.closest('[data-output-action]');
+    if (!button) return;
+    const container = button.closest('.formatted-output');
+    const content = container && container.querySelector('.formatted-source');
+    if (!content) return;
+    const value = content.textContent;
+    const format = container.getAttribute('data-output-format');
+    if (button.dataset.outputAction === 'copy') {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(value);
+        else {
+          const input = document.createElement('textarea');
+          input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
+          document.body.appendChild(input); input.select();
+          const copied = document.execCommand('copy'); input.remove();
+          if (!copied) throw new Error('Copy unavailable');
+        }
+        button.textContent = 'Copied';
+      }
+      catch (_) { button.textContent = 'Copy failed'; }
+      setTimeout(function() { button.textContent = 'Copy'; }, 2000);
+    } else if (button.dataset.outputAction === 'download') {
+      const extension = {javascript:'js',markdown:'md',text:'txt'}[format] || format;
+      const url = URL.createObjectURL(new Blob([value], {type:'text/plain;charset=utf-8'}));
+      const link = document.createElement('a');
+      link.href = url; link.download = 'output.' + extension; link.style.display = 'none';
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    }
+    });
+  }
+  if (typeof document !== 'undefined') installOutputActions();
   function codeHtml(output) {
     const payload = output.data?.[codeMime];
     if (!payload || !codeFormats.has(payload.format) || typeof payload.content !== 'string') return '';
@@ -142,7 +211,13 @@ window.LabPresentation = (() => {
       end = match.index + value.length;
     }
     highlighted += escape(content.slice(end));
-    return `<section class="formatted-output"><div class="formatted-heading">${escape(payload.format.toUpperCase())}</div><pre><code>${highlighted}</code></pre></section>`;
+    let tree = '';
+    if (payload.format === 'json') {
+      try { tree = jsonTree(JSON.parse(content)); } catch (_) { /* code remains available */ }
+    } else if (payload.format === 'xml') tree = xmlTree(content);
+    const explorer = tree ? `<div class="structured-explorer" aria-label="${escape(payload.format.toUpperCase())} structure">${tree}</div>` : '';
+    const source = `<pre class="formatted-source"><code>${highlighted}</code></pre>`;
+    return `<section class="formatted-output" data-output-format="${escape(payload.format)}"><div class="formatted-heading"><span>${escape(payload.format.toUpperCase())}</span><span class="formatted-actions"><button type="button" data-output-action="copy" aria-label="Copy ${escape(payload.format.toUpperCase())} output">Copy</button><button type="button" data-output-action="download" aria-label="Download ${escape(payload.format.toUpperCase())} output">Download</button></span></div>${explorer}${tree ? `<details class="formatted-code"><summary>Source</summary>${source}</details>` : source}</section>`;
   }
   function formHtml(output, values = {}, disabled = false) {
     const form = output.data?.[formMime];
@@ -151,13 +226,13 @@ window.LabPresentation = (() => {
       if (!field || typeof field.id !== 'string' || !formTypes.has(field.type)) return '';
       const id = escape(field.id), label = escape(field.label ?? field.id);
       const value = Object.prototype.hasOwnProperty.call(values, field.id) ? values[field.id] : field.value;
-      const attr = `data-form-field="${id}" data-form-type="${field.type}" ${disabled ? 'disabled' : ''}`;
+      const attr = `data-form-field="${id}" data-form-type="${field.type}" ${field.required ? 'required' : ''} ${field.type === 'number' && Number.isFinite(field.min) ? `min="${field.min}"` : ''} ${field.type === 'number' && Number.isFinite(field.max) ? `max="${field.max}"` : ''} ${disabled ? 'disabled' : ''}`;
       let control;
       if (field.type === 'checkbox') control = `<input type="checkbox" ${attr} ${value === true ? 'checked' : ''}>`;
       else if (field.type === 'textarea') control = `<textarea ${attr}>${escape(value ?? '')}</textarea>`;
-      else if (field.type === 'select') {
+      else if (field.type === 'select' || field.type === 'multiselect') {
         if (!Array.isArray(field.options)) return '';
-        control = `<select ${attr}>${field.options.filter(option => typeof option === 'string').map(option => `<option value="${escape(option)}" ${option === value ? 'selected' : ''}>${escape(option)}</option>`).join('')}</select>`;
+        control = `<select ${attr} ${field.type === 'multiselect' ? 'multiple size="4"' : ''}>${field.options.filter(option => typeof option === 'string').map(option => `<option value="${escape(option)}" ${field.type === 'multiselect' ? Array.isArray(value) && value.includes(option) ? 'selected' : '' : option === value ? 'selected' : ''}>${escape(option)}</option>`).join('')}</select>`;
       } else control = `<input type="${field.type}" ${attr} value="${escape(value ?? '')}">`;
       return `<label class="form-field ${field.type === 'checkbox' ? 'form-checkbox' : ''}"><span>${label}</span>${control}</label>`;
     }).join('');
@@ -165,6 +240,7 @@ window.LabPresentation = (() => {
   }
 
   const syntaxCss = `.syntax-comment{color:#899791;font-style:italic}.syntax-string{color:#428777}.syntax-keyword{color:#9560ad}.syntax-number{color:#b9793c}.syntax-type{color:#417eaa}.syntax-method{color:#ab7146}.syntax-annotation{color:#b89039}.syntax-punctuation{color:#86909f}`;
+  const outputCss = `.formatted-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.formatted-actions{display:flex;gap:6px}.formatted-actions button{font:inherit;font-size:11px;letter-spacing:0;text-transform:none;color:#536174;border:1px solid #d8dfe8;border-radius:4px;background:#fff;padding:3px 8px;cursor:pointer}.formatted-actions button:hover{background:#edf4f7}.structured-explorer{max-height:450px;overflow:auto;padding:9px 12px;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}.output-tree-node{margin:2px 0}.output-tree-node summary{cursor:pointer;white-space:pre-wrap;overflow-wrap:anywhere}.output-tree-children{margin-left:14px;padding-left:9px;border-left:1px solid #d8dfe8}.output-tree-leaf{white-space:pre-wrap;overflow-wrap:anywhere}.output-tree-key{color:#9560ad}.output-tree-type{color:#75808f}.output-tree-value{color:#428777}.formatted-code>summary{cursor:pointer;border-top:1px solid #e5e9ee;padding:5px 12px;color:#75808f;font-size:11px}.formatted-code:not([open]) pre{display:none}.formatted-output pre.formatted-source{white-space:pre;overflow:auto}@media print{.formatted-actions{display:none}.structured-explorer{max-height:none;overflow:visible}}`;
   const exportCss = `
     .grid-output{width:100%;margin:auto}.grid-title{font-size:15px;font-weight:500;margin:0 0 9px;color:#536174}.grid-table{font-size:12px}.grid-table .gridjs-th,.grid-table .gridjs-td{padding:9px 12px}.table-render-error{color:#af6056;padding:12px}
     .formatted-output,.lab-form{border:1px solid #e5e9ee;border-radius:7px;background:#f8fafc;overflow:hidden}.formatted-heading{padding:6px 12px;font-size:10px;letter-spacing:1px;color:#75808f;border-bottom:1px solid #e5e9ee}.formatted-output pre{padding:12px;white-space:pre;overflow:auto;margin:0}.lab-form{padding:14px}.lab-form h3{font-size:15px;margin:0 0 12px}.form-fields{display:grid;gap:12px}.form-field{display:grid;gap:4px;font-size:12px}.form-field input,.form-field textarea,.form-field select{font:inherit;padding:7px;border:1px solid #d8dfe8;border-radius:4px;max-width:100%}.form-field textarea{min-height:72px}.form-checkbox{display:flex;align-items:center;gap:9px}.form-checkbox input{order:-1}
@@ -211,10 +287,12 @@ window.LabPresentation = (() => {
       return `<section class="export-cell"><div class="cell-label">${code ? 'JAVA' : 'RAW'} · CELL ${index+1}${c.execution_count != null ? ' · EXECUTION '+escape(c.execution_count) : ''}</div><div class="export-code"><div class="line-numbers" aria-hidden="true">${numbers}</div><pre><code>${code ? highlightJava(value) : escape(value)}</code></pre></div>${outputs}</section>`;
     }).join('\n');
     const script = text => text.replace(/<\/script/gi,'<\\/script');
+    const hasFormatted = document.cells.some(c => (c.outputs || []).some(o => !!codeHtml(o)));
     const scripts = (hasECharts ? `<script>${script(assets.runtime)}</script><script>${script(assets.bootstrap)}</script>` : '')
-      +(hasGrid?`<script>${script(assets.gridRuntime)}</script><script>${script(assets.gridBootstrap)}</script>`:'');
+      +(hasGrid?`<script>${script(assets.gridRuntime)}</script><script>${script(assets.gridBootstrap)}</script>`:'')
+      +(hasFormatted?`<script>(${installOutputActions.toString()})();</script>`:'');
     const gridCss=hasGrid?assets.gridCss.replace(/<\/style/gi,'<\\/style'):'';
-    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)} · Java Lab</title><style>${gridCss}${syntaxCss}${exportCss}</style></head><body><main><header class="cover"><div class="brand">JAVA LAB / NOTEBOOK</div><h1>${escape(title)}</h1><div class="subtitle"><span class="pill">Java · JShell</span>${codeCount} code ${codeCount===1 ? 'cell' : 'cells'} · ${escape(date)}</div></header><article class="document">${cells}</article><footer><span>Crafted with Java Lab</span><span>A self-contained notebook · Code, notes & results</span></footer></main>${scripts}</body></html>`;
+    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)} · Java Lab</title><style>${gridCss}${syntaxCss}${exportCss}${outputCss}</style></head><body><main><header class="cover"><div class="brand">JAVA LAB / NOTEBOOK</div><h1>${escape(title)}</h1><div class="subtitle"><span class="pill">Java · JShell</span>${codeCount} code ${codeCount===1 ? 'cell' : 'cells'} · ${escape(date)}</div></header><article class="document">${cells}</article><footer><span>Crafted with Java Lab</span><span>A self-contained notebook · Code, notes & results</span></footer></main>${scripts}</body></html>`;
   }
   return {highlightJava, markdown, exportHtml, imageHtml, echartsHtml, echartsMime, gridHtml, gridMime, codeHtml, codeMime, formHtml, formMime, syntaxCss};
 })();

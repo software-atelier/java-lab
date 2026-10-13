@@ -117,12 +117,47 @@ test('Formatted code safely highlights JSON and exports without executing source
   const output={output_type:'display_data',data:{'application/vnd.java-lab.code+json':{format:'json',content:'{"name":"<script>alert(1)</script>","ok":true}'}}};
   const markup=context.window.LabPresentation.codeHtml(output);
   assert.match(markup,/formatted-output/);
+  assert.match(markup,/class="structured-explorer"/);
+  assert.match(markup,/class="output-tree-node" open/);
+  assert.match(markup,/data-output-action="copy"/);
+  assert.match(markup,/data-output-action="download"/);
   assert.match(markup,/\n  <span class="syntax-string">&quot;name&quot;<\/span>/);
   assert.match(markup,/&lt;script&gt;/);
   assert.doesNotMatch(markup,/<script>/);
   const html=exportHtml('Code.jnb',{cells:[{cell_type:'code',source:'Formatted.json("test");',outputs:[output]}]});
   assert.match(html,/formatted-output/);
-  assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/<script>\(function installOutputActions\(\)/);
+  assert.doesNotMatch(html,/<script>alert\(1\)<\/script>/);
+  assert.doesNotMatch(html,/<script src=|src="https?:/);
+});
+
+test('JSON explorer escapes keys and values, and falls back to source for invalid JSON', () => {
+  const codeHtml=context.window.LabPresentation.codeHtml;
+  const dangerous={output_type:'display_data',data:{'application/vnd.java-lab.code+json':{format:'json',content:'{"<img onerror=alert(1)>":["</script>",2]}'}}};
+  const html=codeHtml(dangerous);
+  assert.match(html,/&lt;img onerror=alert\(1\)&gt;/);
+  assert.match(html,/&lt;\/script&gt;/);
+  assert.doesNotMatch(html,/<img|<\/script>/);
+  assert.match(html,/Array \(2\)/);
+  const invalid={output_type:'display_data',data:{'application/vnd.java-lab.code+json':{format:'json',content:'not JSON'}}};
+  assert.doesNotMatch(codeHtml(invalid),/structured-explorer/);
+  assert.match(codeHtml(invalid),/not JSON/);
+});
+
+test('XML explorer renders an escaped tree and rejects document type declarations', () => {
+  const text={nodeType:3,nodeValue:'<unsafe>',childNodes:[]};
+  const child={nodeType:1,tagName:'item',attributes:[{name:'label',value:'<img src=x>'}],childNodes:[text]};
+  const root={nodeType:1,tagName:'root',attributes:[],childNodes:[child]};
+  context.DOMParser=class {parseFromString() {return {documentElement:root,querySelector:()=>null};}};
+  const codeHtml=context.window.LabPresentation.codeHtml;
+  const output=content=>({output_type:'display_data',data:{'application/vnd.java-lab.code+json':{format:'xml',content}}});
+  const html=codeHtml(output('<root><item label="&lt;img src=x&gt;">&lt;unsafe&gt;</item></root>'));
+  assert.match(html,/class="structured-explorer"/);
+  assert.match(html,/&lt;img src=x&gt;/);
+  assert.match(html,/&lt;unsafe&gt;/);
+  assert.doesNotMatch(html,/<img|<unsafe>/);
+  assert.doesNotMatch(codeHtml(output('<!DOCTYPE root><root/>')),/structured-explorer/);
+  delete context.DOMParser;
 });
 
 test('Forms render escaped controls, use persisted values, and export as disabled snapshots', () => {
@@ -141,4 +176,27 @@ test('Forms render escaped controls, use persisted values, and export as disable
   const html=exportHtml('Forms.jnb',{metadata:{java_lab:{form_values:{name:'Grace'}}},cells:[{cell_type:'code',source:'Forms.form("prefs").show();',outputs:[output]}]});
   assert.match(html,/value="Grace"/);
   assert.match(html,/data-form-field="name"[^>]+disabled/);
+});
+
+test('Form validation metadata and multi-select values render safely in notebook and export', () => {
+  const output={output_type:'display_data',data:{'application/vnd.java-lab.form+json':{id:'validated',fields:[
+    {id:'name',type:'text',label:'Name',value:'Ada',required:true},
+    {id:'score',type:'number',label:'Score',value:4,min:0,max:10},
+    {id:'email',type:'email',label:'Email',value:''},
+    {id:'date',type:'date',label:'Date',value:''},
+    {id:'tags',type:'multiselect',label:'Tags',value:[],options:['Java','<unsafe>']}
+  ]}}};
+  const render=context.window.LabPresentation.formHtml;
+  const html=render(output,{tags:['Java','<unsafe>']});
+  assert.match(html,/data-form-field="name"[^>]*required/);
+  assert.match(html,/data-form-field="score"[^>]*min="0"[^>]*max="10"/);
+  assert.match(html,/type="email"/);
+  assert.match(html,/type="date"/);
+  assert.match(html,/multiple size="4"/);
+  assert.match(html,/value="Java" selected/);
+  assert.match(html,/value="&lt;unsafe&gt;" selected/);
+  assert.doesNotMatch(html,/<unsafe>/);
+  const snapshot=exportHtml('Forms.jnb',{metadata:{java_lab:{form_values:{tags:['Java']}}},cells:[{cell_type:'code',source:'',outputs:[output]}]});
+  assert.match(snapshot,/multiple size="4"/);
+  assert.match(snapshot,/data-form-field="tags"[^>]*disabled/);
 });
