@@ -34,6 +34,8 @@ import org.eclipse.aether.util.repository.DefaultProxySelector;
 import org.eclipse.aether.util.repository.SimpleArtifactDescriptorPolicy;
 import org.sonatype.plexus.components.cipher.DefaultPlexusCipher;
 import org.sonatype.plexus.components.sec.dispatcher.DefaultSecDispatcher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -57,11 +59,29 @@ import java.util.regex.Pattern;
 
 /** Resolves compile/runtime JARs using the user's Maven repositories, per notebook kernel. */
 final class MavenDependencies {
+    private static final Logger LOG = LoggerFactory.getLogger(MavenDependencies.class);
     private static final String CENTRAL = "https://repo.maven.apache.org/maven2/";
     private static final Pattern ENV_REFERENCE = Pattern.compile("\\$\\{env\\.([A-Za-z_][A-Za-z0-9_]*)}");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
     private static final Pattern XML_ENCODING = Pattern.compile(
             "(?i)(<\\?xml\\s+[^?]*?\\bencoding\\s*=\\s*)(['\"])[^'\"]*\\2");
+    private static final Set<String> DIAGNOSTIC_TYPES = Set.of(
+            "org.eclipse.aether.collection.DependencyCollectionException",
+            "org.eclipse.aether.resolution.DependencyResolutionException",
+            "org.apache.maven.settings.building.SettingsBuildingException",
+            "java.lang.IllegalArgumentException",
+            "org.eclipse.aether.transfer.ArtifactNotFoundException",
+            "org.eclipse.aether.transfer.ArtifactTransferException",
+            "org.eclipse.aether.transfer.MetadataNotFoundException",
+            "org.eclipse.aether.transfer.MetadataTransferException",
+            "org.apache.http.client.HttpResponseException",
+            "java.net.UnknownHostException", "java.net.ConnectException", "java.net.NoRouteToHostException",
+            "java.net.SocketTimeoutException", "java.net.SocketException", "java.net.UnknownServiceException",
+            "java.io.EOFException", "java.io.FileNotFoundException",
+            "java.nio.file.AccessDeniedException", "javax.net.ssl.SSLException",
+            "javax.net.ssl.SSLHandshakeException", "java.security.cert.CertificateException",
+            "java.security.cert.CertificateExpiredException", "java.security.cert.CertificateNotYetValidException",
+            "java.security.cert.CertPathValidatorException", "sun.security.validator.ValidatorException");
     private final RepositorySystem system = new RepositorySystemSupplier().get();
     private final Path userSettings;
     private final Path globalSettings;
@@ -128,12 +148,19 @@ final class MavenDependencies {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Maven dependencies exceed 500 MB");
             return artifacts.stream().map(a -> a.getFile().toPath()).distinct().toList();
         } catch (DependencyResolutionException | DependencyCollectionException e) {
-            // Never include exception text: repository URLs and authentication details may be sensitive.
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, resolutionFailure(e, settings));
+            String reason = resolutionFailure(e, settings);
+            // Resolver exception messages and stack traces can contain URLs, credentials, or HTTP headers.
+            // Log only structured exception types and status codes, never Throwable objects or messages.
+            LOG.warn("Maven dependency {} failed: {} Causes: {}",
+                    e instanceof DependencyCollectionException ? "collection" : "resolution",
+                    reason, failureDiagnostic(e));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, reason);
         } catch (SettingsBuildingException e) {
+            LOG.warn("Maven settings loading failed. Causes: {}", failureDiagnostic(e));
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Could not read Maven settings. Check ~/.m2/settings.xml and its active profiles.");
         } catch (IllegalArgumentException e) {
+            LOG.warn("Maven dependency setup failed. Causes: {}", failureDiagnostic(e));
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Could not resolve Maven dependencies. Check the coordinates and Maven settings.");
         }
@@ -204,6 +231,37 @@ final class MavenDependencies {
             for (Exception cause : collection.getResult().getExceptions()) inspectFailure(cause, seen, signals);
         for (Throwable suppressed : failure.getSuppressed()) inspectFailure(suppressed, seen, signals);
         inspectFailure(failure.getCause(), seen, signals);
+    }
+
+    /** A bounded, credential-free view of all Resolver failures, including per-artifact exceptions. */
+    static String failureDiagnostic(Throwable failure) {
+        List<String> causes = new ArrayList<>();
+        collectFailureTypes(failure, Collections.newSetFromMap(new IdentityHashMap<>()), causes);
+        return String.join(" -> ", causes);
+    }
+
+    private static void collectFailureTypes(Throwable failure, Set<Throwable> seen, List<String> causes) {
+        if (failure == null || causes.size() >= 30 || !seen.add(failure)) return;
+        String type = failure.getClass().getName();
+        String status = "";
+        if ("org.apache.http.client.HttpResponseException".equals(type)) {
+            try {
+                status = " (HTTP " + failure.getClass().getMethod("getStatusCode").invoke(failure) + ")";
+            } catch (ReflectiveOperationException ignored) {
+                // Exception type alone remains safe and useful.
+            }
+        }
+        causes.add((DIAGNOSTIC_TYPES.contains(type) ? type : "OtherException") + status);
+        collectFailureTypes(failure.getCause(), seen, causes);
+        for (Throwable suppressed : failure.getSuppressed()) collectFailureTypes(suppressed, seen, causes);
+        if (failure instanceof DependencyResolutionException resolution && resolution.getResult() != null) {
+            for (Exception cause : resolution.getResult().getCollectExceptions())
+                collectFailureTypes(cause, seen, causes);
+            for (var artifact : resolution.getResult().getArtifactResults())
+                for (Exception cause : artifact.getExceptions()) collectFailureTypes(cause, seen, causes);
+        }
+        if (failure instanceof DependencyCollectionException collection && collection.getResult() != null)
+            for (Exception cause : collection.getResult().getExceptions()) collectFailureTypes(cause, seen, causes);
     }
 
     private static final class FailureSignals {
