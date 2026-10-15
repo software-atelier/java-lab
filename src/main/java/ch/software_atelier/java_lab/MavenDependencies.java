@@ -172,9 +172,9 @@ final class MavenDependencies {
         } catch (IllegalArgumentException e) {
             // A Resolver message may contain repository URLs, usernames or passwords.
             // The phase and ordinal locate the bad input without reproducing its value.
-            LOG.warn("Maven dependency setup failed during {}{}. Causes: {}",
+            LOG.warn("Maven dependency setup failed during {}{}. Causes: {}. Origin: {}",
                     phase, "dependency coordinate parsing".equals(phase) ? " (coordinate #" + coordinateIndex + ")" : "",
-                    failureDiagnostic(e));
+                    failureDiagnostic(e), failureOrigin(e));
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "dependency coordinate parsing".equals(phase)
                             ? "Invalid Maven dependency coordinate #" + coordinateIndex
@@ -256,6 +256,18 @@ final class MavenDependencies {
         List<String> causes = new ArrayList<>();
         collectFailureTypes(failure, Collections.newSetFromMap(new IdentityHashMap<>()), causes);
         return String.join(" -> ", causes);
+    }
+
+    /** Reports only a known library's method name, never an exception message or stack trace. */
+    static String failureOrigin(Throwable failure) {
+        for (StackTraceElement frame : failure.getStackTrace()) {
+            String owner = frame.getClassName();
+            if (owner.startsWith("org.eclipse.aether.") || owner.startsWith("org.apache.maven.")
+                    || owner.startsWith("ch.software_atelier.java_lab.")) {
+                return owner + "#" + frame.getMethodName();
+            }
+        }
+        return "unavailable";
     }
 
     private static void collectFailureTypes(Throwable failure, Set<Throwable> seen, List<String> causes) {

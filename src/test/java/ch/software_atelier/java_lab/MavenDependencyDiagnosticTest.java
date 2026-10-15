@@ -78,4 +78,16 @@ class MavenDependencyDiagnosticTest {
         assertThat(diagnostic.split(" -> ")).hasSize(30);
         assertThat(diagnostic).doesNotContain("secret");
     }
+
+    @Test void failureOriginNamesOnlyKnownLibraryMethods() {
+        var failure = new IllegalArgumentException("https://secret-user:secret-password@private.example");
+        failure.setStackTrace(new StackTraceElement[]{
+                new StackTraceElement("private.example.secret-password", "token", "secret-user.java", 1),
+                new StackTraceElement("org.eclipse.aether.util.repository.DefaultProxySelector", "getProxy", "DefaultProxySelector.java", 42)
+        });
+
+        assertThat(MavenDependencies.failureOrigin(failure))
+                .isEqualTo("org.eclipse.aether.util.repository.DefaultProxySelector#getProxy")
+                .doesNotContain("secret", "private.example", "42");
+    }
 }
