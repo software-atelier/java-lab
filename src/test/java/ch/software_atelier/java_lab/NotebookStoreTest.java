@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,5 +85,72 @@ class NotebookStoreTest {
                 .as("unsafe upload filename: %s", unsafe).isInstanceOf(ResponseStatusException.class);
         Files.createSymbolicLink(directory.resolve("link"), directory.resolve("Projects"));
         assertThatThrownBy(() -> store.list("link")).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test void movesNotebooksBetweenFoldersWithoutOverwritingAndKeepsLocalValues() throws Exception {
+        var store = new NotebookStore(new ObjectMapper(), directory);
+        store.createFolder("From");
+        store.createFolder("To");
+        String original = store.create("From/Report");
+        var notebook = store.read(original);
+        var variables = notebook.withObject("metadata").withObject("java_lab").putArray("variables");
+        variables.addObject().put("name", "TOKEN").put("defaultValue", "shareable");
+        store.save(original, notebook);
+        store.updateValues(original, java.util.Map.of("TOKEN", "private"), java.util.List.of());
+
+        assertThat(store.move(original, "To")).isEqualTo("To/Report.jnb");
+        assertThat(store.list("From")).isEmpty();
+        assertThat(store.read("To/Report.jnb")).isEqualTo(notebook);
+        assertThat(store.effectiveValues("To/Report.jnb")).containsEntry("TOKEN", "private");
+        assertThat(store.move("To/Report.jnb", "To")).isEqualTo("To/Report.jnb");
+
+        store.create("From/Report");
+        assertThatThrownBy(() -> store.move("To/Report.jnb", "From"))
+            .isInstanceOfSatisfying(ResponseStatusException.class, e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+        assertThat(store.read("To/Report.jnb")).isEqualTo(notebook);
+    }
+
+    @Test void rejectsUnsafeNotebookMoves() throws Exception {
+        var store = new NotebookStore(new ObjectMapper(), directory);
+        store.createFolder("Safe");
+        store.create("Safe/Notebook");
+        Files.writeString(directory.resolve(".private.txt"), "secret");
+        for (String source : java.util.List.of(".private.txt", "../private.jnb", "Safe/../Notebook.jnb"))
+            assertThatThrownBy(() -> store.move(source, ""))
+                .as("source: %s", source).isInstanceOf(ResponseStatusException.class);
+        for (String target : java.util.List.of("../Outside", "Missing", "Safe/.."))
+            assertThatThrownBy(() -> store.move("Safe/Notebook.jnb", target))
+                .as("target: %s", target).isInstanceOf(ResponseStatusException.class);
+        Files.createSymbolicLink(directory.resolve("Linked"), directory.resolve("Safe"));
+        assertThatThrownBy(() -> store.move("Safe/Notebook.jnb", "Linked"))
+            .isInstanceOf(ResponseStatusException.class);
+        Files.createSymbolicLink(directory.resolve("Safe/alias.jnb"), directory.resolve("Safe/Notebook.jnb"));
+        assertThatThrownBy(() -> store.move("Safe/alias.jnb", ""))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThat(Files.exists(directory.resolve("Safe/Notebook.jnb"))).isTrue();
+    }
+
+    @Test void listsAndMovesUploadedDataFilesButNotHiddenFilesOrSymlinks() throws Exception {
+        var store = new NotebookStore(new ObjectMapper(), directory);
+        store.createFolder("Input");
+        store.createFolder("Output");
+        store.create("Input/Analysis");
+        store.upload("Input", "data.csv", "name\nAda\n".getBytes());
+        Files.writeString(directory.resolve("Input/.hidden.txt"), "hidden");
+        Files.createDirectory(directory.resolve(".internal"));
+        Files.createSymbolicLink(directory.resolve("Input/linked.csv"), directory.resolve("Input/data.csv"));
+
+        assertThat(store.list("Input")).extracting(NotebookStore.Entry::name, NotebookStore.Entry::type)
+            .containsExactlyInAnyOrder(tuple("Analysis.jnb", "notebook"), tuple("data.csv", "file"));
+        assertThat(store.folders("")).extracting(NotebookStore.Folder::name).doesNotContain(".internal");
+        assertThatThrownBy(() -> store.move("Input/data.csv", ".internal"))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThat(store.move("Input/data.csv", "Output")).isEqualTo("Output/data.csv");
+        assertThat(Files.readString(directory.resolve("Output/data.csv"))).isEqualTo("name\nAda\n");
+        assertThat(store.list("Input")).extracting(NotebookStore.Entry::name).containsExactly("Analysis.jnb");
+        assertThatThrownBy(() -> store.move("Input/.hidden.txt", "Output"))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> store.move("Input/linked.csv", "Output"))
+            .isInstanceOf(ResponseStatusException.class);
     }
 }

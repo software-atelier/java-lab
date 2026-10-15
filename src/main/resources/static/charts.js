@@ -1,6 +1,6 @@
 /* ECharts is bundled as a WebJar; this renderer is also embedded in HTML exports. */
 window.NotebookCharts = (() => {
-  const runtimeUrl = '/webjars/echarts/6.0.0/dist/echarts.min.js';
+  const runtimeUrl = 'webjars/echarts/6.0.0/dist/echarts.min.js';
   let runtime;
 
   // Keep this function self-contained: export uses its source without the application UI.

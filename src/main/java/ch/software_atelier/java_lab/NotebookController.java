@@ -13,6 +13,7 @@ public class NotebookController {
     public NotebookController(NotebookStore store) { this.store = store; }
     public record NameRequest(String name) {}
     public record FolderRequest(String path) {}
+    public record MoveRequest(String path, String folder) {}
     public record ValuesRequest(Map<String,String> values, java.util.List<String> clear) {}
 
     @GetMapping public Map<String, Object> list(@RequestParam(defaultValue = "") String folder) throws IOException {
@@ -27,6 +28,11 @@ public class NotebookController {
         return Map.of("path", store.createFolder(request.path()));
     }
     @DeleteMapping("/folders") public void deleteFolder(@RequestParam String path) throws IOException { store.deleteFolder(path); }
+    @PostMapping("/move") public Map<String, String> move(@RequestBody MoveRequest request) throws IOException {
+        String path = store.move(request.path(), request.folder());
+        return Map.of("path", path, "folder", path.contains("/") ? path.substring(0, path.lastIndexOf('/')) : "",
+            "name", path.substring(path.lastIndexOf('/') + 1));
+    }
     @PatchMapping("/folders") public Map<String, String> renameFolder(@RequestParam String path, @RequestBody NameRequest request) throws IOException {
         return Map.of("path", store.renameFolder(path, request.name()));
     }

@@ -29,28 +29,32 @@ public class NotebookStore {
 
     public NotebookValues values() { return values; }
 
-    public record Entry(String name, long size, long modified) {}
+    public record Entry(String name, long size, long modified, String type) {}
     public record Folder(String name, String path) {}
 
     public String directory() { return root.toString(); }
 
     public List<Entry> list() throws IOException { return list(""); }
     public List<Entry> list(String folder) throws IOException {
-        Path directory = resolveFolder(folder, true);
+        Path directory = resolveFolder(visibleFolderPath(folder), true);
         try (var files = Files.list(directory)) {
-            return files.filter(p -> isNotebookName(p.getFileName().toString()))
-                .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+            return files.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                .filter(p -> visibleFilename(p.getFileName().toString()))
                 .map(p -> {
-                    try { return new Entry(p.getFileName().toString(), Files.size(p), Files.getLastModifiedTime(p).toMillis()); }
+                    try {
+                        String name = p.getFileName().toString();
+                        return new Entry(name, Files.size(p), Files.getLastModifiedTime(p).toMillis(), isNotebookName(name) ? "notebook" : "file");
+                    }
                     catch (IOException e) { throw new java.io.UncheckedIOException(e); }
                 }).sorted(Comparator.comparing(Entry::name, String.CASE_INSENSITIVE_ORDER)).toList();
         }
     }
 
     public List<Folder> folders(String folder) throws IOException {
-        Path directory = resolveFolder(folder, true);
+        Path directory = resolveFolder(visibleFolderPath(folder), true);
         try (var files = Files.list(directory)) {
             return files.filter(p -> Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS))
+                .filter(p -> visibleFilename(p.getFileName().toString()))
                 .map(p -> new Folder(p.getFileName().toString(), root.relativize(p).toString().replace('\\', '/')))
                 .sorted(Comparator.comparing(Folder::name, String.CASE_INSENSITIVE_ORDER)).toList();
         }
@@ -215,6 +219,50 @@ public class NotebookStore {
         Files.move(source, target);
         values.rename(source, target);
         return newName;
+    }
+
+    /** Move a listed notebook or data file without changing its filename. */
+    public synchronized String move(String sourcePath, String targetFolder) throws IOException {
+        Path source = resolveVisibleFile(sourcePath);
+        Path destinationDirectory = resolveFolder(visibleFolderPath(targetFolder), true);
+        if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found");
+        Path target = destinationDirectory.resolve(source.getFileName());
+        if (source.equals(target)) return relative(target);
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A file with that name already exists");
+        try { Files.move(source, target); }
+        catch (FileAlreadyExistsException e) { throw new ResponseStatusException(HttpStatus.CONFLICT, "A file with that name already exists"); }
+        if (isNotebookName(source.getFileName().toString())) {
+            try { values.rename(source, target); }
+            catch (IOException | RuntimeException e) {
+                try { Files.move(target, source); }
+                catch (IOException rollback) { e.addSuppressed(rollback); }
+                throw e;
+            }
+        }
+        return relative(target);
+    }
+
+    private String relative(Path path) { return root.relativize(path).toString().replace('\\', '/'); }
+
+    private Path resolveVisibleFile(String path) {
+        if (path == null || path.isBlank()) throw badRequest("File path is required");
+        int slash = path.lastIndexOf('/');
+        String filename = path.substring(slash + 1);
+        if (!visibleFilename(filename)) throw badRequest("Invalid file path");
+        Path result = resolveFolder(visibleFolderPath(slash < 0 ? "" : path.substring(0, slash)), false).resolve(filename);
+        if (Files.isSymbolicLink(result)) throw badRequest("Symbolic links are not allowed in file paths");
+        return result;
+    }
+
+    private static boolean visibleFilename(String name) { return validSegment(name) && !name.startsWith("."); }
+
+    private String visibleFolderPath(String path) {
+        if (path == null || path.isBlank()) return "";
+        for (String segment : path.split("/", -1))
+            if (!visibleFilename(segment)) throw badRequest("Invalid folder path");
+        return path;
     }
 
     public synchronized void delete(String name) throws IOException {

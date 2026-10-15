@@ -1,6 +1,6 @@
 /* Bundled Grid.js rendering, shared with standalone HTML exports. */
 window.NotebookTables = (() => {
-  const base = '/webjars/gridjs/6.2.0/dist/';
+  const base = 'webjars/gridjs/6.2.0/dist/';
   let assets;
 
   function mount(root = document) {

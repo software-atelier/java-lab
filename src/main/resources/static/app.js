@@ -10,7 +10,7 @@ const notebookPath = (folder, name) => folder ? folder + '/' + name : name;
 let toastTimer;
 
 async function api(path, method = 'GET', body, options = {}) {
-  const response = await fetch('/api' + path, { ...options, method, headers: body === undefined ? {} : {'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await fetch('api' + path, { ...options, method, headers: body === undefined ? {} : {'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     try { const error = await response.json(); message = error.message || error.detail || message; } catch (_) { /* non-JSON error */ }
@@ -89,8 +89,9 @@ async function refreshFiles() {
 function renderFiles() {
   const filter = $('#file-search').value.toLowerCase();
   const files = state.files.filter(f => f.name.toLowerCase().includes(filter));
-  $('#file-list').innerHTML = (state.folder ? `<button class="file-row folder-row" data-parent-folder="true">${icon('folder')}<span class="file-name">..</span></button>` : '') + state.folders.filter(f=>f.name.toLowerCase().includes(filter)).map(f => `<button class="file-row folder-row" data-folder="${escapeHtml(f.path)}" title="Open ${escapeHtml(f.name)}">${icon('folder')}<span class="file-name">${escapeHtml(f.name)}</span></button>`).join('') + (files.length ? files.map(f => `<button class="file-row ${active()?.path === notebookPath(state.folder, f.name) ? 'active' : ''}" data-file="${escapeHtml(f.name)}" data-file-folder="${escapeHtml(state.folder)}" title="${escapeHtml(f.name)}">${icon('file')}<span class="file-name">${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time></button>`).join('') : (!state.folder && !state.folders.length ? `<div class="empty-files">${filter ? 'No matching notebooks.' : 'A fresh workspace.<br>Create your first notebook to begin.'}</div>` : ''));
-  $('#recent-files').innerHTML = state.files.length ? [...state.files].sort((a,b) => b.modified-a.modified).slice(0,4).map(f => `<button class="recent-row" data-file="${escapeHtml(f.name)}" data-file-folder="${escapeHtml(state.folder)}">${icon('file')}<span>${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time>${icon('chevron')}</button>`).join('') : '<div class="recent-empty">Your notebooks will appear here. Let’s make the first one.</div>';
+  $('#file-list').innerHTML = (state.folder ? `<button class="file-row folder-row" data-parent-folder="true" title="Move files to parent folder or open it">${icon('folder')}<span class="file-name">..</span></button>` : '') + state.folders.filter(f=>f.name.toLowerCase().includes(filter)).map(f => `<button class="file-row folder-row" data-folder="${escapeHtml(f.path)}" title="Open ${escapeHtml(f.name)} or drop a file here">${icon('folder')}<span class="file-name">${escapeHtml(f.name)}</span></button>`).join('') + (files.length ? files.map(f => `<button class="file-row ${f.type==='file'?'data-file-row':''} ${active()?.path === notebookPath(state.folder, f.name) ? 'active' : ''}" data-file="${escapeHtml(f.name)}" data-file-type="${escapeHtml(f.type)}" data-file-folder="${escapeHtml(state.folder)}" draggable="true" title="${escapeHtml(f.name)} · ${f.type==='notebook'?'open or drag into a folder':'drag into a folder'}">${icon('file')}<span class="file-name">${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time></button>`).join('') : (!state.folder && !state.folders.length ? `<div class="empty-files">${filter ? 'No matching files.' : 'A fresh workspace.<br>Create your first notebook to begin.'}</div>` : ''));
+  const recent=state.files.filter(f=>f.type==='notebook');
+  $('#recent-files').innerHTML = recent.length ? [...recent].sort((a,b) => b.modified-a.modified).slice(0,4).map(f => `<button class="recent-row" data-file="${escapeHtml(f.name)}" data-file-type="notebook" data-file-folder="${escapeHtml(state.folder)}">${icon('file')}<span>${escapeHtml(f.name)}</span><time>${dateLabel(f.modified)}</time>${icon('chevron')}</button>`).join('') : '<div class="recent-empty">Your notebooks will appear here. Let’s make the first one.</div>';
 }
 function renderTabs() {
   $('#tabs').innerHTML = (state.launcher ? '<div class="tab active" data-launcher="true">'+icon('grid')+'<span class="tab-name">Launcher</span></div>' : '') + state.notebooks.map(n => `<div class="tab ${active() === n ? 'active' : ''}" data-tab="${n.uid}" role="button" tabindex="0">${icon('file')}<span class="tab-name">${escapeHtml(n.name)}</span>${n.dirty ? '<span class="dirty-dot" title="Unsaved changes"></span>' : ''}<button class="icon-button" data-close="${n.uid}" title="Close notebook" aria-label="Close ${escapeHtml(n.name)}">${icon('close')}</button></div>`).join('');
@@ -124,6 +125,7 @@ async function openNotebook(name, folder = state.folder) {
   state.active = notebook; state.launcher = false; renderWorkspace();
 }
 function renderWorkspace() {
+  if(editingTitle&&titleNotebook!==active())finishNotebookTitle(false);
   $('#launcher').hidden = !state.launcher; $('#notebook').hidden = state.launcher;
   renderTabs(); renderFiles();
   if (active()) { $('#notebook-name').textContent = active().name.replace(/\.(jnb|ipynb)$/, ''); renderCells(); }
@@ -366,7 +368,7 @@ async function uploadDataFile(file) {
   if(!file)return;
   if(/\.(jnb|ipynb)$/i.test(file.name))throw new Error('Notebook import is not supported by file upload. Upload a data file instead.');
   const body=new FormData();body.append('file',file);
-  const response=await fetch('/api/notebooks/uploads'+folderQuery(state.folder),{method:'POST',body});
+  const response=await fetch('api/notebooks/uploads'+folderQuery(state.folder),{method:'POST',body});
   if(!response.ok){let message=`Upload failed (${response.status})`;try{const error=await response.json();message=error.message||error.detail||message;}catch(_){}throw new Error(message);}
   const result=await response.json();
   await refreshFiles();
@@ -380,10 +382,39 @@ async function renameNotebook(name = active()?.name, folder = active()?.folder ?
   if (!name) return;
   const newName = await modal('Rename notebook', 'Choose a name for your notebook.', 'Rename', name);
   if (!newName) return;
-  const n = state.notebooks.find(n => n.path === notebookPath(folder,name));
-  if (n) await saveNotebook(n);
-  const result = await api('/notebooks/'+encodeURIComponent(name)+folderQuery(folder),'PATCH',{name:newName});
-  if (n) {n.name = result.name; n.path = notebookPath(folder,result.name);} await refreshFiles(); renderWorkspace();
+  await renameNotebookTo(name,folder,newName);
+}
+async function renameNotebookTo(name,folder,newName) {
+  if(!newName || newName===name || newName===name.replace(/\.(jnb|ipynb)$/,''))return;
+  const n=state.notebooks.find(n=>n.path===notebookPath(folder,name));
+  if(n){if(n.running)throw new Error('Interrupt execution before renaming this notebook.');await saveNotebook(n);}
+  const result=await api('/notebooks/'+encodeURIComponent(name)+folderQuery(folder),'PATCH',{name:newName});
+  if(n){n.name=result.name;n.path=notebookPath(folder,result.name);}
+  await refreshFiles();renderWorkspace();notify('Notebook renamed');
+}
+let editingTitle=false,titleNotebook=null;
+function editNotebookTitle() {
+  const n=active();if(!n||editingTitle)return;
+  editingTitle=true;titleNotebook=n;
+  const title=$('#notebook-name'),input=$('#notebook-name-editor');
+  input.value=n.name.replace(/\.(jnb|ipynb)$/,'');title.hidden=true;input.hidden=false;
+  input.focus();input.select();
+}
+function finishNotebookTitle(commit=true) {
+  if(!editingTitle)return;
+  editingTitle=false;
+  const title=$('#notebook-name'),input=$('#notebook-name-editor'),n=titleNotebook;
+  titleNotebook=null;
+  const value=input.value.trim();input.hidden=true;title.hidden=false;
+  if(commit&&n&&value)renameNotebookTo(n.name,n.folder,value).catch(e=>notify(e.message,true));
+}
+async function moveFile(name,sourceFolder,targetFolder) {
+  if(targetFolder===sourceFolder)return;
+  const sourcePath=notebookPath(sourceFolder,name),n=state.notebooks.find(open=>open.path===sourcePath);
+  if(n){if(n.running)throw new Error('Interrupt execution before moving this notebook.');await saveNotebook(n);}
+  const result=await api('/notebooks/move','POST',{path:sourcePath,folder:targetFolder});
+  if(n){n.folder=targetFolder;n.path=result.path;n.name=result.name;}
+  await refreshFiles();renderWorkspace();notify(`${name} moved to ${targetFolder||'Working directory'}`);
 }
 async function deleteNotebook(name, folder = state.folder) {
   if (!await modal('Delete notebook?', `<strong>${escapeHtml(name)}</strong> will be permanently deleted from the working directory.`, 'Delete')) return;
@@ -422,6 +453,7 @@ async function dispatch(action) {try {await actions[action]?.();} catch(e){notif
 
 document.addEventListener('click', async event => {
   const target = event.target;
+  if(target.closest('#notebook-name')){editNotebookTitle();return;}
   const menuTrigger = target.closest('.menu-trigger');
   $$('.menu').forEach(menu=>{if(menu!==menuTrigger?.parentElement)menu.classList.remove('open');});
   if(menuTrigger){menuTrigger.parentElement.classList.toggle('open');return;}
@@ -431,7 +463,7 @@ document.addEventListener('click', async event => {
   const close = target.closest('[data-close]'); if(close){try{await closeNotebook(state.notebooks.find(n=>n.uid===close.dataset.close));}catch(e){notify(e.message,true);}return;}
   const folder = target.closest('[data-folder]'); if(folder){state.folder=folder.dataset.folder;await refreshFiles();return;}
   if(target.closest('[data-parent-folder]')){state.folder=state.folder.split('/').slice(0,-1).join('/');await refreshFiles();return;}
-  const file = target.closest('[data-file]'); if(file){try{await openNotebook(file.dataset.file,file.dataset.fileFolder || '');}catch(e){notify(e.message,true);}return;}
+  const file = target.closest('[data-file]'); if(file){if(file.dataset.fileType!=='notebook')return;try{await openNotebook(file.dataset.file,file.dataset.fileFolder || '');}catch(e){notify(e.message,true);}return;}
   const tab = target.closest('[data-tab]'); if(tab){state.active=state.notebooks.find(n=>n.uid===tab.dataset.tab);state.launcher=false;renderWorkspace();return;}
   const panel = target.closest('[data-panel]'); if(panel){const type=panel.dataset.panel;const sidebar=$('#sidebar');sidebar.hidden=false;if(innerWidth<=760)sidebar.classList.toggle('revealed',state.panel!==type||!sidebar.classList.contains('revealed'));state.panel=type;$('#files-panel').hidden=type!=='files';$('#running-panel').hidden=type!=='running';$('#panel-title').textContent=type==='files'?'FILE BROWSER':'RUNNING KERNELS';$$('[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===type));return;}
   const element = target.closest('[data-cell]');
@@ -457,6 +489,36 @@ document.addEventListener('click', async event => {
   }
 });
 $('#file-search').addEventListener('input',renderFiles);
+$('#notebook-name').addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();editNotebookTitle();}});
+$('#notebook-name-editor').addEventListener('keydown',event=>{
+  if(event.key==='Enter'){event.preventDefault();finishNotebookTitle();}
+  else if(event.key==='Escape'){event.preventDefault();finishNotebookTitle(false);}
+});
+$('#notebook-name-editor').addEventListener('blur',()=>finishNotebookTitle());
+let draggedFile=null;
+const fileList=$('#file-list');
+const dropFolder=element=>element?.hasAttribute('data-parent-folder')?state.folder.split('/').slice(0,-1).join('/'):element?.dataset.folder;
+fileList.addEventListener('dragstart',event=>{
+  const file=event.target.closest('[data-file]');if(!file)return;
+  draggedFile={name:file.dataset.file,folder:file.dataset.fileFolder||''};
+  event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',notebookPath(draggedFile.folder,draggedFile.name));
+  file.classList.add('dragging');
+});
+fileList.addEventListener('dragover',event=>{
+  const target=event.target.closest('[data-folder],[data-parent-folder]');
+  const folder=dropFolder(target);
+  $$('.folder-drop-target',fileList).forEach(row=>row.classList.remove('folder-drop-target'));
+  if(!draggedFile||folder===undefined||folder===draggedFile.folder)return;
+  event.preventDefault();event.dataTransfer.dropEffect='move';target.classList.add('folder-drop-target');
+});
+fileList.addEventListener('drop',event=>{
+  const target=event.target.closest('[data-folder],[data-parent-folder]'),folder=dropFolder(target),file=draggedFile;
+  if(!file||folder===undefined||folder===file.folder)return;
+  event.preventDefault();draggedFile=null;
+  $$('.folder-drop-target,.dragging',fileList).forEach(row=>row.classList.remove('folder-drop-target','dragging'));
+  moveFile(file.name,file.folder,folder).catch(e=>notify(e.message,true));
+});
+fileList.addEventListener('dragend',()=>{draggedFile=null;$$('.folder-drop-target,.dragging',fileList).forEach(row=>row.classList.remove('folder-drop-target','dragging'));});
 $('#upload-input').addEventListener('change',event=>{const file=event.target.files?.[0];event.target.value='';uploadDataFile(file).catch(e=>notify(e.message,true));});
 function updateFormControl(control) {
   const n=active();if(!n)return;
@@ -479,10 +541,10 @@ $('#cell-type').addEventListener('change',event=>{if(window.NotebookControls)Not
 $('#file-list').addEventListener('contextmenu',event=>{
   const folder=event.target.closest('[data-folder]');
   if(folder){event.preventDefault();$('.file-context')?.remove();const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button type="button">Delete empty folder</button>';document.body.append(menu);menu.addEventListener('click',()=>{menu.remove();deleteFolder(folder.dataset.folder).catch(e=>notify(e.message,true));});return;}
-  const file=event.target.closest('[data-file]');if(!file)return;event.preventDefault();$('.file-context')?.remove();
+  const file=event.target.closest('[data-file]');if(!file||file.dataset.fileType!=='notebook')return;event.preventDefault();$('.file-context')?.remove();
   const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-160)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button data-context="rename">Rename notebook</button><button data-context="delete">Delete notebook</button>';document.body.append(menu);
   menu.addEventListener('click',event=>{const action=event.target.dataset.context;menu.remove();(action==='rename'?renameNotebook(file.dataset.file,file.dataset.fileFolder):deleteNotebook(file.dataset.file,file.dataset.fileFolder)).catch(e=>notify(e.message,true));});
 });
 window.addEventListener('beforeunload',event=>{if(state.notebooks.some(n=>n.dirty||n.running)){event.preventDefault();event.returnValue='';}});
-window.addEventListener('pagehide',()=>{for(const n of state.notebooks){if(n.kernel)fetch(`/api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});
+window.addEventListener('pagehide',()=>{for(const n of state.notebooks){if(n.kernel)fetch(`api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});
 renderWorkspace(); refreshFiles().catch(e=>{$('#connection-state').textContent='Disconnected';notify(e.message,true);});

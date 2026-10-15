@@ -1,6 +1,9 @@
 /* Notebook workflow additions. */
 .folder-row{font-weight:600;color:#607087}.folder-row svg{color:#b98052}
+.file-row[draggable="true"]{cursor:grab}.file-row.dragging{opacity:.45}.folder-row.folder-drop-target{background:#fff0e5;outline:2px dashed var(--accent);outline-offset:-3px}
+.data-file-row svg{color:#7d8ca0}.data-file-row .file-name{color:#637184}
 .breadcrumb #folder-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#notebook-name{cursor:text;border-radius:3px}#notebook-name:hover{color:var(--accent)}#notebook-name:focus-visible{outline:2px solid var(--accent);outline-offset:3px}#notebook-name-editor{display:block;font-size:19px;font-weight:500;letter-spacing:-.4px;margin:7px 0 0;padding:2px 5px;width:min(100%,420px);border:1px solid var(--accent);border-radius:4px;background:#fff;color:var(--ink)}#notebook-name-editor[hidden]{display:none}
 .form-apply{margin-top:14px;font-size:11px;padding:7px 11px}
 .stale-output .cell-outputs{border-left:3px solid #d5a66c;background:#fffaf3;opacity:.7}
 .stale-output .cell-outputs::before{content:'Stale output · form values changed';display:block;padding:4px 12px;color:#a36e36;font-size:10px;letter-spacing:.2px}

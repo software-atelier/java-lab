@@ -28,8 +28,8 @@ window.NotebookControls = (() => {
     ['Application','Ctrl / Cmd B','Toggle file browser (outside Markdown editor)'],['Application','Ctrl / Cmd Shift F / Alt 1','Focus file browser'],
     ['Application','Alt W / Ctrl Shift Q','Close notebook tab'],['Application','Ctrl / Cmd Shift [ / ]','Previous / next notebook tab'],
     ['Application','Ctrl / Cmd Shift T','Reopen closed notebook'],['Application','Ctrl / Cmd Shift D','Toggle simple interface (outside editor)'],
-    ['Application','Ctrl / Cmd P','Print notebook'],['Application','Alt N','New Java notebook (Java Lab)']
-    ,['File browser','↑ / ↓','Focus previous / next notebook file'],['File browser','Enter','Open notebook'],['File browser','F2 / Delete','Rename / delete notebook'],['File browser','Ctrl / Cmd D','Duplicate notebook file']
+    ['Application','Ctrl / Cmd P','Print notebook'],['Application','Alt N','New Java notebook (Java Lab)'],['Both','Alt Shift V','Vibecode selected Java cell']
+    ,['File browser','↑ / ↓','Focus previous / next file'],['File browser','Enter','Open notebook'],['File browser','F2 / Delete','Rename / delete notebook'],['File browser','Ctrl / Cmd D','Duplicate notebook file']
   ];
   function nstate(n=active()){return n?M.ensure(n):null;}
   function indexes(n=active()){return n?M.selected(n):[];}
@@ -253,15 +253,16 @@ window.NotebookControls = (() => {
     if(event.key==='Escape'&&$('.menu.open')){consume(event);$$('.menu').forEach(menu=>menu.classList.remove('open'));if(n)command(n);return;}
     const file=event.target.closest?.('#file-list [data-file]');
     if(file) {
-      if(event.key==='F2'){consume(event);renameNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
-      if(event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
-      if(accel&&key==='d'){consume(event);(async()=>{const folder=file.dataset.fileFolder || '';const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file)+folderQuery(folder));const copy=await api('/notebooks'+folderQuery(folder),'POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name)+folderQuery(folder),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
+      if(file.dataset.fileType==='notebook'&&event.key==='F2'){consume(event);renameNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
+      if(file.dataset.fileType==='notebook'&&event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
+      if(file.dataset.fileType==='notebook'&&accel&&key==='d'){consume(event);(async()=>{const folder=file.dataset.fileFolder || '';const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file)+folderQuery(folder));const copy=await api('/notebooks'+folderQuery(folder),'POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name)+folderQuery(folder),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
       if(['ArrowUp','ArrowDown'].includes(event.key)){consume(event);const files=$$('#file-list [data-file]'),i=files.indexOf(file),next=Math.max(0,Math.min(i+(event.key==='ArrowUp'?-1:1),files.length-1));files[next]?.focus();return;}
     }
     if(accel&&event.shiftKey&&(key==='c'||key==='p')){consume(event);showPalette();return;}
     if(accel&&event.shiftKey&&key==='h'){consume(event);perform('help');return;}
     if(accel&&key==='s'){consume(event);perform(event.shiftKey?'save-as':'save');return;}
     if(event.altKey&&!accel&&key==='n'){consume(event);perform('new');return;}
+    if(n&&(editor||commandScope(event))&&event.altKey&&event.shiftKey&&!accel&&(event.code==='KeyV'||key==='v')&&n.document.cells[n.selected]?.cell_type==='code'&&!n.running){consume(event);perform('vibecode');return;}
     if(n&&event.altKey&&key==='w'||n&&event.ctrlKey&&event.shiftKey&&key==='q'){consume(event);perform('close');return;}
     if(accel&&event.shiftKey&&event.code==='BracketRight'){consume(event);switchTab(1);return;}
     if(accel&&event.shiftKey&&event.code==='BracketLeft'){consume(event);switchTab(-1);return;}

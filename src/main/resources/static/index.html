@@ -5,26 +5,26 @@
   <meta name="theme-color" content="#fafbfc">
   <title>Java Lab</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23e87435'/%3E%3Ctext x='10' y='29' font-size='28' fill='white' font-family='monospace'%3EJ%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/editor.css">
-  <link rel="stylesheet" href="/webjars/gridjs/6.2.0/dist/theme/mermaid.min.css">
-  <link rel="stylesheet" href="/tables.css">
-  <link rel="stylesheet" href="/notebook-controls.css">
-  <link rel="stylesheet" href="/notebook-settings.css">
-  <link rel="stylesheet" href="/output-explorer.css">
-  <link rel="stylesheet" href="/workspace-features.css">
-  <script src="/webjars/gridjs/6.2.0/dist/gridjs.umd.js" defer></script>
-  <script src="/tables.js" defer></script>
-  <script src="/webjars/echarts/6.0.0/dist/echarts.min.js" defer></script>
-  <script src="/charts.js" defer></script>
-  <script src="/presentation.js" defer></script>
-  <script src="/notebook-model.js" defer></script>
-  <script src="/getting-started.js" defer></script>
-  <script src="/app.js" defer></script>
-  <script src="/notebook-settings.js" defer></script>
-  <script src="/editor.js" defer></script>
-  <script src="/notebook-controls.js" defer></script>
-  <script src="/vibecode.js" defer></script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="editor.css">
+  <link rel="stylesheet" href="webjars/gridjs/6.2.0/dist/theme/mermaid.min.css">
+  <link rel="stylesheet" href="tables.css">
+  <link rel="stylesheet" href="notebook-controls.css">
+  <link rel="stylesheet" href="notebook-settings.css">
+  <link rel="stylesheet" href="output-explorer.css">
+  <link rel="stylesheet" href="workspace-features.css">
+  <script src="webjars/gridjs/6.2.0/dist/gridjs.umd.js" defer></script>
+  <script src="tables.js" defer></script>
+  <script src="webjars/echarts/6.0.0/dist/echarts.min.js" defer></script>
+  <script src="charts.js" defer></script>
+  <script src="presentation.js" defer></script>
+  <script src="notebook-model.js" defer></script>
+  <script src="getting-started.js" defer></script>
+  <script src="app.js" defer></script>
+  <script src="notebook-settings.js" defer></script>
+  <script src="editor.js" defer></script>
+  <script src="notebook-controls.js" defer></script>
+  <script src="vibecode.js" defer></script>
 </head>
 <body>
 <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg"><defs>
@@ -48,7 +48,7 @@
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 4 3l-1 1M12 17h.01"/></symbol>
 </defs></svg>
 <header class="menubar">
-  <a class="brand" href="/" aria-label="Java Lab home"><span class="brand-mark">J<span>·</span></span><strong>java<span>lab</span></strong></a>
+  <a class="brand" href="./" aria-label="Java Lab home"><span class="brand-mark">J<span>·</span></span><strong>java<span>lab</span></strong></a>
   <nav aria-label="Application menu">
     <div class="menu"><button class="menu-trigger">File</button><div class="menu-popup">
       <button data-action="new">New notebook <kbd>Alt N</kbd></button><button data-action="new-folder">New folder</button><button data-action="upload">Upload file…</button><button data-action="save">Save notebook <kbd>⌘ / Ctrl S</kbd></button><button data-action="rename">Rename notebook</button><button data-action="settings">Notebook settings…</button><hr><button data-action="export-html">Export as HTML (with outputs)</button><button data-action="download">Download share-safe notebook (.jnb)</button><hr><button data-action="close">Close tab</button>
@@ -101,11 +101,11 @@
         <div class="toolbar-group"><button class="icon-button" data-action="save" title="Save (Ctrl / ⌘ S)" aria-label="Save"><svg><use href="#i-save"/></svg></button><button class="icon-button" data-action="add" title="Insert cell below" aria-label="Insert cell"><svg><use href="#i-plus"/></svg></button></div>
         <div class="toolbar-group"><button class="run-button" data-action="run-next" title="Run and select next (Shift Enter)"><svg><use href="#i-play"/></svg> Run</button><button class="icon-button" data-action="interrupt" title="Interrupt kernel" aria-label="Interrupt kernel"><svg><use href="#i-stop"/></svg></button><button class="icon-button" data-action="restart" title="Restart kernel" aria-label="Restart kernel"><svg><use href="#i-refresh"/></svg></button><button class="text-button run-all" data-action="run-all">Run all</button><button class="text-button restart-run-all" data-action="restart-run-all">Restart &amp; run all</button></div>
         <div class="toolbar-group"><select id="cell-type" aria-label="Cell type"><option value="code">Code</option><option value="markdown">Markdown</option><option value="raw">Raw</option></select></div>
-        <button class="text-button vibe-button" data-action="vibecode" title="Generate or edit the selected Java cell with AI">✦ Vibecode</button>
+        <button class="text-button vibe-button" data-action="vibecode" title="Generate or edit the selected Java cell with AI (Alt Shift V)">✦ Vibecode</button>
         <span class="toolbar-spacer"></span><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button export-button" data-action="export-html" title="Download a styled, standalone HTML notebook">Export HTML ↗</button><span id="save-state" class="save-state"></span><span class="kernel-indicator"><span id="kernel-dot"></span> Java <span class="kernel-engine">JShell</span></span>
       </div>
       <div id="notebook-search" class="notebook-search" hidden><input id="notebook-query" aria-label="Find notebook source" placeholder="Find in notebook…"><span id="search-count"></span><button id="search-previous" class="secondary" title="Previous match">↑</button><button id="search-next" class="secondary" title="Next match">↓</button><button id="search-close" class="icon-button" aria-label="Close search">×</button><div id="replace-row" hidden><input id="notebook-replacement" aria-label="Replacement text" placeholder="Replace with…"><button id="replace-one" class="secondary">Replace</button><button id="replace-all" class="secondary">Replace all</button></div></div>
-      <div class="notebook-scroll" id="notebook-scroll" tabindex="-1" aria-label="Notebook cells"><div class="notebook-title"><div><span class="notebook-label">JAVA NOTEBOOK</span><h2 id="notebook-name"></h2></div><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button" data-action="rename" title="Rename notebook">Rename</button></div><div id="cells"></div><button class="add-cell-bottom" data-action="add-end"><svg><use href="#i-plus"/></svg> Add a cell</button><div class="notebook-hint"><kbd>Esc</kbd> command mode <span>·</span> <kbd>Enter</kbd> edit mode <span>·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> run</div></div>
+      <div class="notebook-scroll" id="notebook-scroll" tabindex="-1" aria-label="Notebook cells"><div class="notebook-title"><div><span class="notebook-label">JAVA NOTEBOOK</span><h2 id="notebook-name" tabindex="0" role="button" title="Click to rename notebook" aria-label="Rename notebook by editing its title"></h2><input id="notebook-name-editor" aria-label="Notebook title" maxlength="200" hidden></div><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button" data-action="rename" title="Rename notebook">Rename</button></div><div id="cells"></div><button class="add-cell-bottom" data-action="add-end"><svg><use href="#i-plus"/></svg> Add a cell</button><div class="notebook-hint"><kbd>Esc</kbd> command mode <span>·</span> <kbd>Enter</kbd> edit mode <span>·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> run</div></div>
     </section>
   </main>
 </div>
