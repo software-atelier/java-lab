@@ -1,6 +1,7 @@
 package ch.software_atelier.java_lab;
 
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,6 +17,7 @@ import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -210,6 +212,156 @@ class MavenDependenciesSettingsTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test void interpolatesEnvironmentPortBeforeParsingAndRoutesThroughProxy() throws Exception {
+        Path repository = directory.resolve("proxy-repository");
+        writeArtifacts(repository);
+        AtomicInteger directRequests = new AtomicInteger();
+        AtomicInteger proxyRequests = new AtomicInteger();
+        HttpServer direct = artifactServer(repository, directRequests);
+        HttpServer proxy = artifactServer(repository, proxyRequests);
+        try {
+            Path settings = proxySettings(direct.getAddress().getPort(), "${env.PROXY_PORT}", "");
+            var resolver = new MavenDependencies(settings, null, directory.resolve("proxy-cache"),
+                    Map.of("PROXY_PORT", Integer.toString(proxy.getAddress().getPort())));
+            assertThat(resolver.resolve(List.of("test.fixture:parent:1.0"))).hasSize(2);
+            assertThat(proxyRequests.get()).isPositive();
+            assertThat(directRequests.get()).isZero();
+        } finally {
+            proxy.stop(0);
+            direct.stop(0);
+        }
+    }
+
+    @Test void globalSettingsProxyRespectsNonProxyHosts() throws Exception {
+        Path repository = directory.resolve("direct-repository");
+        writeArtifacts(repository);
+        AtomicInteger directRequests = new AtomicInteger();
+        AtomicInteger proxyRequests = new AtomicInteger();
+        HttpServer direct = artifactServer(repository, directRequests);
+        HttpServer proxy = artifactServer(repository, proxyRequests);
+        try {
+            Path globalSettings = proxySettings(direct.getAddress().getPort(), "${env.PROXY_PORT}",
+                    "127.0.0.1");
+            var resolver = new MavenDependencies(null, globalSettings, directory.resolve("bypass-cache"),
+                    Map.of("PROXY_PORT", Integer.toString(proxy.getAddress().getPort())));
+            assertThat(resolver.resolve(List.of("test.fixture:parent:1.0"))).hasSize(2);
+            assertThat(directRequests.get()).isPositive();
+            assertThat(proxyRequests.get()).isZero();
+        } finally {
+            proxy.stop(0);
+            direct.stop(0);
+        }
+    }
+
+    @Test void rejectsInvalidActiveProxyPortsWithoutLeakingCredentials() throws Exception {
+        for (String port : List.of("0", "65536", "not-a-port", "${env.MISSING_PROXY_PORT}")) {
+            Path settings = proxySettings(1, port, "");
+            assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .hasMessageContaining("Invalid active Maven proxy settings")
+                    .hasMessageNotContaining("private-proxy-password")
+                    .hasMessageNotContaining("proxy-user");
+        }
+    }
+
+    @Test void interpolationEscapesXmlSpecialCharacters() {
+        assertThat(MavenDependencies.interpolateSettingsXml("<password>${env.SECRET}</password>",
+                Map.of("SECRET", "a&<\"'b"), System.getProperties()))
+                .isEqualTo("<password>a&amp;&lt;&quot;&apos;b</password>");
+    }
+
+    @Test void readsXmlDeclaredEncodingBeforeInterpolation() throws Exception {
+        Path repository = directory.resolve("latin1-repository");
+        writeArtifacts(repository);
+        Path localRepository = directory.resolve("café-cache");
+        Path settings = directory.resolve("latin1-settings.xml");
+        String xml = """
+                <?xml version="1.0" encoding="ISO-8859-1"?>
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <localRepository>%s</localRepository>
+                  <profiles><profile><id>répo</id><repositories><repository>
+                    <id>fixture</id><url>%s</url>
+                  </repository></repositories></profile></profiles>
+                  <activeProfiles><activeProfile>répo</activeProfile></activeProfiles>
+                </settings>
+                """.formatted(localRepository, repository.toUri());
+        Files.write(settings, xml.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+
+        List<Path> jars = resolver(settings).resolve(List.of("test.fixture:parent:1.0"));
+        assertThat(jars).hasSize(2).allMatch(path -> path.startsWith(localRepository));
+    }
+
+    @Test void rejectsUnresolvedActiveProxyCredentialsWithoutLeakingValues() throws Exception {
+        for (String field : List.of("username", "password")) {
+            Path settings = proxySettings(1, "8888", "");
+            String xml = Files.readString(settings).replace(
+                    "<" + field + ">" + (field.equals("username") ? "proxy-user" : "private-proxy-password")
+                            + "</" + field + ">",
+                    "<" + field + ">${env.MISSING_PROXY_CREDENTIAL}</" + field + ">");
+            Files.writeString(settings, xml);
+            assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .hasMessageContaining("Invalid active Maven proxy settings")
+                    .hasMessageNotContaining("private-proxy-password")
+                    .hasMessageNotContaining("proxy-user")
+                    .hasMessageNotContaining("${env.");
+        }
+    }
+
+    @Test void rejectsPlaceholderRevealedByDecryptingProxyPassword() throws Exception {
+        var cipher = new DefaultPlexusCipher();
+        String master = "fixture-proxy-master";
+        Files.writeString(directory.resolve("settings-security.xml"), "<settingsSecurity><master>"
+                + cipher.encryptAndDecorate(master, "settings.security") + "</master></settingsSecurity>");
+        String encrypted = cipher.encryptAndDecorate("${env.MISSING_PROXY_CREDENTIAL}", master);
+        Path settings = proxySettings(1, "8888", "");
+        Files.writeString(settings, Files.readString(settings).replace("private-proxy-password", encrypted));
+
+        assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:missing:1.0")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Invalid active Maven proxy settings")
+                .hasMessageNotContaining(encrypted)
+                .hasMessageNotContaining("${env.");
+    }
+
+    private Path proxySettings(int repositoryPort, String proxyPort, String nonProxyHosts) throws IOException {
+        return writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <profiles><profile><id>fixture</id><repositories><repository><id>fixture</id>
+                    <url>http://127.0.0.1:%d/repo/</url>
+                  </repository></repositories></profile></profiles>
+                  <activeProfiles><activeProfile>fixture</activeProfile></activeProfiles>
+                  <proxies><proxy><id>fixture-proxy</id><active>true</active>
+                    <protocol>http</protocol><host>127.0.0.1</host><port>%s</port>
+                    <nonProxyHosts>%s</nonProxyHosts><username>proxy-user</username>
+                    <password>private-proxy-password</password>
+                  </proxy></proxies>
+                </settings>
+                """.formatted(repositoryPort, proxyPort, nonProxyHosts));
+    }
+
+    private static HttpServer artifactServer(Path repository, AtomicInteger requests) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> serveArtifact(exchange, repository, requests));
+        server.start();
+        return server;
+    }
+
+    private static void serveArtifact(HttpExchange exchange, Path repository, AtomicInteger requests) throws IOException {
+        requests.incrementAndGet();
+        String path = exchange.getRequestURI().getPath();
+        Path artifact = path.startsWith("/repo/")
+                ? repository.resolve(path.substring("/repo/".length())).normalize() : repository.resolve("missing");
+        if (!artifact.startsWith(repository) || !Files.isRegularFile(artifact)) {
+            exchange.sendResponseHeaders(404, -1);
+        } else {
+            byte[] bytes = Files.readAllBytes(artifact);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var body = exchange.getResponseBody()) { body.write(bytes); }
+        }
+        exchange.close();
     }
 
     private static String absentEnvironmentVariable() {

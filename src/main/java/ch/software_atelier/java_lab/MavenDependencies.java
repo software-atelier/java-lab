@@ -6,8 +6,10 @@ import org.apache.maven.settings.Settings;
 import org.apache.maven.settings.building.DefaultSettingsBuilderFactory;
 import org.apache.maven.settings.building.DefaultSettingsBuildingRequest;
 import org.apache.maven.settings.building.SettingsBuildingException;
+import org.apache.maven.settings.building.StringSettingsSource;
 import org.apache.maven.settings.crypto.DefaultSettingsDecrypter;
 import org.apache.maven.settings.crypto.DefaultSettingsDecryptionRequest;
+import org.apache.commons.io.input.XmlStreamReader;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -35,10 +37,12 @@ import org.sonatype.plexus.components.sec.dispatcher.DefaultSecDispatcher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.file.Path;
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -46,17 +50,23 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Resolves compile/runtime JARs using the user's Maven repositories, per notebook kernel. */
 final class MavenDependencies {
     private static final String CENTRAL = "https://repo.maven.apache.org/maven2/";
     private static final Pattern ENV_REFERENCE = Pattern.compile("\\$\\{env\\.([A-Za-z_][A-Za-z0-9_]*)}");
+    private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Pattern XML_ENCODING = Pattern.compile(
+            "(?i)(<\\?xml\\s+[^?]*?\\bencoding\\s*=\\s*)(['\"])[^'\"]*\\2");
     private final RepositorySystem system = new RepositorySystemSupplier().get();
     private final Path userSettings;
     private final Path globalSettings;
     private final Path cache;
+    private final Map<String, String> environment;
 
     MavenDependencies() {
         this(Path.of(System.getProperty("user.home"), ".m2", "settings.xml"), globalSettingsPath(),
@@ -65,9 +75,14 @@ final class MavenDependencies {
 
     /** Test seam: no process-wide Maven properties or credential changes are required. */
     MavenDependencies(Path userSettings, Path globalSettings, Path cache) {
+        this(userSettings, globalSettings, cache, System.getenv());
+    }
+
+    MavenDependencies(Path userSettings, Path globalSettings, Path cache, Map<String, String> environment) {
         this.userSettings = userSettings;
         this.globalSettings = globalSettings;
         this.cache = cache;
+        this.environment = environment;
     }
 
     List<Path> resolve(List<String> coordinates) {
@@ -199,10 +214,58 @@ final class MavenDependencies {
 
     private Settings loadSettings() throws SettingsBuildingException {
         var request = new DefaultSettingsBuildingRequest();
-        if (userSettings != null) request.setUserSettingsFile(userSettings.toFile());
-        if (globalSettings != null) request.setGlobalSettingsFile(globalSettings.toFile());
+        configureSettingsSource(request, userSettings, true);
+        configureSettingsSource(request, globalSettings, false);
         request.setSystemProperties(System.getProperties());
         return new DefaultSettingsBuilderFactory().newInstance().build(request).getEffectiveSettings();
+    }
+
+    private void configureSettingsSource(DefaultSettingsBuildingRequest request, Path path, boolean user) {
+        if (path == null) return;
+        if (!Files.isRegularFile(path)) {
+            if (user) request.setUserSettingsFile(path.toFile());
+            else request.setGlobalSettingsFile(path.toFile());
+            return;
+        }
+        try {
+            // Maven's settings parser converts <port> to int before its own interpolation.
+            // Resolve values in the XML source first, escaping replacements as XML text.
+            String xml;
+            try (var reader = new XmlStreamReader(path)) {
+                var writer = new java.io.StringWriter();
+                reader.transferTo(writer);
+                // StringSettingsSource serializes its content as UTF-8 bytes, so its XML
+                // declaration must describe that encoding after the original file is decoded.
+                xml = XML_ENCODING.matcher(interpolateSettingsXml(writer.toString(), environment,
+                        System.getProperties())).replaceFirst("$1$2UTF-8$2");
+            }
+            var source = new StringSettingsSource(xml, path.toString());
+            if (user) request.setUserSettingsSource(source);
+            else request.setGlobalSettingsSource(source);
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Could not read Maven settings. Check ~/.m2/settings.xml and its active profiles.");
+        }
+    }
+
+    static String interpolateSettingsXml(String xml, Map<String, String> environment,
+                                          java.util.Properties systemProperties) {
+        Matcher matcher = PROPERTY_REFERENCE.matcher(xml);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            String value = key.startsWith("env.") ? environment.get(key.substring(4))
+                    : systemProperties.getProperty(key);
+            matcher.appendReplacement(result, Matcher.quoteReplacement(
+                    value == null ? matcher.group() : xmlEscape(value)));
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    private static String xmlEscape(String value) {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&apos;");
     }
 
     private void configureSelectors(DefaultRepositorySystemSession session, Settings settings) {
@@ -243,6 +306,13 @@ final class MavenDependencies {
         var proxies = new DefaultProxySelector();
         for (var proxy : configuredProxies) {
             if (!proxy.isActive()) continue;
+            if (proxy.getPort() < 1 || proxy.getPort() > 65535
+                    || unresolved(proxy.getHost()) || unresolved(proxy.getProtocol())
+                    || unresolved(proxy.getNonProxyHosts()) || unresolved(proxy.getUsername())
+                    || unresolved(proxy.getPassword()))
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Invalid active Maven proxy settings: check host, protocol and port (1-65535), "
+                                + "and resolve any settings placeholders.");
             var builder = new AuthenticationBuilder();
             if (proxy.getUsername() != null) builder.addUsername(proxy.getUsername());
             if (proxy.getPassword() != null) builder.addPassword(proxy.getPassword());
@@ -250,6 +320,10 @@ final class MavenDependencies {
                     proxy.getPort(), builder.build()), proxy.getNonProxyHosts());
         }
         session.setProxySelector(proxies);
+    }
+
+    private static boolean unresolved(String value) {
+        return value != null && PROPERTY_REFERENCE.matcher(value).find();
     }
 
     private static boolean isEncrypted(String value) {
