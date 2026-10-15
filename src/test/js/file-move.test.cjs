@@ -42,22 +42,25 @@ test('failed move retains open notebook path, and same-folder drop does nothing'
   assert.equal(h.calls.length,count);
 });
 
-test('file browser lists movable data files but keeps recents notebook-only',()=>{
+test('file browser shows only native notebooks and folders',()=>{
   const start=code.indexOf('function renderFiles()');
   const end=code.indexOf('function renderTabs()',start);
   const nodes={'#file-search':{value:''},'#file-list':{innerHTML:''},'#recent-files':{innerHTML:''}};
   const context={
     state:{folder:'',folders:[{name:'archive',path:'archive'}],files:[
       {name:'Example.jnb',type:'notebook',modified:10},
-      {name:'data.csv',type:'file',modified:20}
+      {name:'data.csv',type:'file',modified:20},
+      {name:'Legacy.ipynb',type:'notebook',modified:30},
+      {name:'.hidden.jnb',type:'notebook',modified:40}
     ]},
     $:selector=>nodes[selector],active:()=>null,notebookPath:(folder,name)=>folder?folder+'/'+name:name,
     icon:()=>'<svg></svg>',escapeHtml:value=>String(value),dateLabel:()=> 'Today'
   };
   vm.runInNewContext(code.slice(start,end),context);
   context.renderFiles();
-  assert.match(nodes['#file-list'].innerHTML,/data-file="data\.csv" data-file-type="file"[^>]*draggable="true"/);
-  assert.match(nodes['#file-list'].innerHTML,/class="file-row data-file-row/);
+  assert.match(nodes['#file-list'].innerHTML,/data-folder="archive"/);
+  assert.match(nodes['#file-list'].innerHTML,/data-file="Example\.jnb"/);
+  assert.doesNotMatch(nodes['#file-list'].innerHTML,/data\.csv|Legacy\.ipynb|\.hidden\.jnb/);
   assert.match(nodes['#recent-files'].innerHTML,/Example\.jnb/);
-  assert.doesNotMatch(nodes['#recent-files'].innerHTML,/data\.csv/);
+  assert.doesNotMatch(nodes['#recent-files'].innerHTML,/data\.csv|Legacy\.ipynb|\.hidden\.jnb/);
 });

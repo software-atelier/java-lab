@@ -30,7 +30,7 @@ mvn clean package
 java -jar target/java-lab.jar
 ```
 
-On a system with a graphical desktop, Java Lab opens the default browser automatically once the server is ready. On a headless server, open **http://127.0.0.1:8080** manually (or use the configured port and context path). The automatic URL follows the actual listening port, including a dynamically assigned port.
+On a system with a graphical desktop, Java Lab opens the default browser automatically once the server is ready. The URL is also written to the log. On a headless server, open **http://127.0.0.1:10080** manually (or use the configured port and context path). The automatic URL follows the actual listening port, including a dynamically assigned port.
 
 **Notebooks are stored in the directory you launch the application from**, rather than next to the JAR. To use a different workspace, launch the JAR from that directory with its absolute path:
 
@@ -64,7 +64,7 @@ For development: `mvn spring-boot:run`. Tests: `mvn test`.
 - **Interactive tables:** bundled Grid.js 6.2.0 provides searching, sorting, and pagination through a fluent Java wrapper, with persistence and offline HTML export.
 - **Execution controls:** run selected cell, run and advance, run all (stops on error), interrupt, restart kernel, and **Restart & run all** to rebuild Java state after a refresh or timeout.
 - **Editing:** insert, duplicate, reorder, delete, change cell type, and clear outputs. Double-click rendered Markdown to edit it.
-- **Files:** create, filter, open, rename, delete, and download notebooks in nested workspace folders. Click a notebook title to rename it inline. Drag notebooks and data files onto another folder (or `..` for the parent folder) to move them. Create and delete empty folders, and upload data files; CSV uploads show a preview.
+- **Files:** create, filter, open, rename, delete, and download `.jnb` notebooks in nested workspace folders. Click a notebook title to rename it inline. Drag notebooks onto another folder (or `..` for the parent folder) to move them. Create and delete empty folders, and upload data files; CSV uploads show a preview.
 - **Beautiful HTML export:** **Export HTML** in the toolbar or **File → Export as HTML** downloads a standalone document with a styled cover, Markdown, syntax-highlighted Java, line numbers, and saved outputs. All styling is embedded; the exported file opens offline without the server. Responsive and print-friendly layouts are included.
 - **Autosave:** saves 1.2 seconds after an edit, with explicit save available. Changes, notes, and outputs persist to disk using atomic replacement where supported.
 - **Getting started:** the introduction launcher card creates and runs a sample notebook covering logging, Java state, formatted output, an interactive form, JSON/CSV, JFreeChart, Apache ECharts, and Grid.js. Click **A quick introduction** to create a fresh copy of the latest version.
@@ -487,7 +487,7 @@ Instructions are limited to 10,000 characters and cell sources/replacements to 1
 
 New notebooks use **`.jnb` (Java notebook)**. Their JSON structure retains the nbformat 4 cell and output model, with Java language metadata and a Java Lab format version, so the contents remain easy to inspect and process. Existing metadata is retained.
 
-The file browser lists `.jnb` and legacy `.ipynb` notebooks alongside regular data files in the working directory and nested folders. Data files can be moved but are not opened as notebooks. Create folders from the file browser and open them to keep notebooks and uploaded data together. Empty folders can be deleted. Existing `.ipynb` files can still be opened and saved under their original names. Renaming a legacy notebook converts its extension to `.jnb`; downloading it also uses `.jnb`. Files are not automatically renamed on startup. Symbolic-link notebook files/folders and directory traversal are rejected.
+The file browser lists only `.jnb` notebooks and folders in the working directory and nested folders; uploaded data files and legacy `.ipynb` notebooks are not shown. Create folders from the file browser and open them to organize notebooks and uploaded data. Empty folders can be deleted. Existing `.ipynb` files remain accessible through the notebook API; renaming a legacy notebook converts its extension to `.jnb`, and downloading it also uses `.jnb`. Files are not automatically renamed on startup. Symbolic-link notebook files/folders and directory traversal are rejected.
 
 Use **Upload file** in the file browser to place a data file in the current folder. CSV uploads display the header and up to 20 data rows (up to 30 columns) before you use the file from Java with `Path.of(...)`. The upload limit is **10 MB**; upload filenames cannot contain path separators or be notebook files (`.jnb`/`.ipynb`). Existing filenames are given a numeric suffix rather than overwritten. Uploaded files are local workspace data, not embedded in a notebook or its HTML export.
 
@@ -537,11 +537,11 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| GET | `/api/notebooks?folder=Projects` | Working directory, notebook/data-file listing (with `type`), and child folders; omit `folder` for workspace root |
+| GET | `/api/notebooks?folder=Projects` | Working directory, `.jnb` notebook listing, and child folders; omit `folder` for workspace root |
 | POST | `/api/notebooks?folder=Projects` | Create; optional `{ "name": "Example.jnb" }` |
 | GET / PUT / DELETE | `/api/notebooks/{name}?folder=Projects` | Read / save notebook JSON / delete |
 | PATCH | `/api/notebooks/{name}?folder=Projects` | Rename with `{ "name": "New.jnb" }` |
-| POST | `/api/notebooks/move` | Move a listed file with `{ "path": "Projects/data.csv", "folder": "Archive" }` |
+| POST | `/api/notebooks/move` | Move a notebook with `{ "path": "Projects/Analysis.jnb", "folder": "Archive" }`; workspace data files can also be moved via API. |
 | GET / PUT | `/api/notebooks/{name}/values?folder=Projects` | Inspect value sources / set or clear local values without returning their contents |
 | POST | `/api/notebooks/folders` | Create `{ "path": "Projects/2026" }` |
 | PATCH / DELETE | `/api/notebooks/folders?path=Projects/2026` | Rename an empty folder with `{ "name": "New name" }` / delete an empty folder |

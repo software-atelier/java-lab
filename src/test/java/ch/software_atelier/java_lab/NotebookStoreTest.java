@@ -54,10 +54,11 @@ class NotebookStoreTest {
         var store = new NotebookStore(new ObjectMapper(), directory);
         var original = store.read(store.create("Original"));
         store.save("Legacy.ipynb", original);
-        assertThat(store.list()).extracting(NotebookStore.Entry::name).contains("Legacy.ipynb", "Original.jnb");
+        assertThat(store.list()).extracting(NotebookStore.Entry::name).containsExactly("Original.jnb");
         assertThat(store.read("Legacy.ipynb")).isEqualTo(original);
         assertThat(store.rename("Legacy.ipynb", "Legacy.ipynb")).isEqualTo("Legacy.jnb");
         assertThat(store.read("Legacy.jnb")).isEqualTo(original);
+        assertThat(store.list()).extracting(NotebookStore.Entry::name).contains("Legacy.jnb");
         assertThat(Files.exists(directory.resolve("Legacy.ipynb"))).isFalse();
     }
 
@@ -130,23 +131,27 @@ class NotebookStoreTest {
         assertThat(Files.exists(directory.resolve("Safe/Notebook.jnb"))).isTrue();
     }
 
-    @Test void listsAndMovesUploadedDataFilesButNotHiddenFilesOrSymlinks() throws Exception {
+    @Test void listsOnlyNativeNotebooksAndMovesUploadedDataFilesWithoutDisplayingThem() throws Exception {
         var store = new NotebookStore(new ObjectMapper(), directory);
         store.createFolder("Input");
         store.createFolder("Output");
         store.create("Input/Analysis");
         store.upload("Input", "data.csv", "name\nAda\n".getBytes());
+        store.save("Input/Legacy.ipynb", store.read("Input/Analysis.jnb"));
+        Files.writeString(directory.resolve("Input/notes.txt"), "notes");
         Files.writeString(directory.resolve("Input/.hidden.txt"), "hidden");
+        Files.writeString(directory.resolve("Input/.hidden.jnb"), "hidden");
         Files.createDirectory(directory.resolve(".internal"));
         Files.createSymbolicLink(directory.resolve("Input/linked.csv"), directory.resolve("Input/data.csv"));
 
         assertThat(store.list("Input")).extracting(NotebookStore.Entry::name, NotebookStore.Entry::type)
-            .containsExactlyInAnyOrder(tuple("Analysis.jnb", "notebook"), tuple("data.csv", "file"));
+            .containsExactly(tuple("Analysis.jnb", "notebook"));
         assertThat(store.folders("")).extracting(NotebookStore.Folder::name).doesNotContain(".internal");
         assertThatThrownBy(() -> store.move("Input/data.csv", ".internal"))
             .isInstanceOf(ResponseStatusException.class);
         assertThat(store.move("Input/data.csv", "Output")).isEqualTo("Output/data.csv");
         assertThat(Files.readString(directory.resolve("Output/data.csv"))).isEqualTo("name\nAda\n");
+        assertThat(store.list("Output")).isEmpty();
         assertThat(store.list("Input")).extracting(NotebookStore.Entry::name).containsExactly("Analysis.jnb");
         assertThatThrownBy(() -> store.move("Input/.hidden.txt", "Output"))
             .isInstanceOf(ResponseStatusException.class);

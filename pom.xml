@@ -9,7 +9,7 @@
   </parent>
   <groupId>ch.software_atelier</groupId>
   <artifactId>java-lab</artifactId>
-  <version>1.4.0</version>
+  <version>1.4.1</version>
   <name>Java Lab</name>
   <description>A local Java notebook workspace</description>
   <properties>

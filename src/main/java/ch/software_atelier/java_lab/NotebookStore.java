@@ -39,11 +39,11 @@ public class NotebookStore {
         Path directory = resolveFolder(visibleFolderPath(folder), true);
         try (var files = Files.list(directory)) {
             return files.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-                .filter(p -> visibleFilename(p.getFileName().toString()))
+                .filter(p -> visibleFilename(p.getFileName().toString()) && p.getFileName().toString().endsWith(".jnb"))
                 .map(p -> {
                     try {
                         String name = p.getFileName().toString();
-                        return new Entry(name, Files.size(p), Files.getLastModifiedTime(p).toMillis(), isNotebookName(name) ? "notebook" : "file");
+                        return new Entry(name, Files.size(p), Files.getLastModifiedTime(p).toMillis(), "notebook");
                     }
                     catch (IOException e) { throw new java.io.UncheckedIOException(e); }
                 }).sorted(Comparator.comparing(Entry::name, String.CASE_INSENSITIVE_ORDER)).toList();
