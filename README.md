@@ -30,7 +30,7 @@ mvn clean package
 java -jar target/java-lab.jar
 ```
 
-On a system with a graphical desktop, Java Lab opens the default browser automatically once the server is ready. The URL is also written to the log. On a headless server, open **http://127.0.0.1:10080** manually (or use the configured port and context path). The automatic URL follows the actual listening port, including a dynamically assigned port.
+On a system with a graphical desktop, Java Lab asks the OS to open the default browser once the server is ready. The URL is also written to the log. On a headless server, open **http://127.0.0.1:10081** manually (or use the configured port and context path). The automatic URL follows the actual listening port, including a dynamically assigned port.
 
 **Notebooks are stored in the directory you launch the application from**, rather than next to the JAR. To use a different workspace, launch the JAR from that directory with its absolute path:
 

@@ -67,7 +67,7 @@ public class JavaLabApplication {
                     openWithCommand("xdg-open", url);
                 } else if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                     Desktop.getDesktop().browse(url);
-                    log.info("Opened Java Lab in the default browser at {}", url);
+                    log.info("Handed Java Lab URL {} to the OS browser launcher", url);
                 } else {
                     log.warn("Automatic browser opening is unavailable; open {} manually", url);
                 }
@@ -90,7 +90,7 @@ public class JavaLabApplication {
             log.warn("Could not open Java Lab in the default browser at {} ({} exited with {}: {})",
                     url, command, exitCode, output);
         } else {
-            log.info("Opened Java Lab in the default browser at {}", url);
+            log.info("Handed Java Lab URL {} to the OS browser launcher", url);
         }
     }
 
