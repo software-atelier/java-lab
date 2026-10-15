@@ -5,6 +5,9 @@ import com.sun.net.httpserver.HttpExchange;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.sonatype.plexus.components.cipher.DefaultPlexusCipher;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -155,6 +158,20 @@ class MavenDependenciesSettingsTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageNotContaining(password)
                 .hasMessageNotContaining("fixture-user");
+    }
+
+    @Test @ExtendWith(OutputCaptureExtension.class)
+    void invalidCoordinateIdentifiesPositionWithoutLoggingInput(CapturedOutput output) {
+        String invalid = "sensitive-coordinate-value";
+        MavenDependencies dependencies = new MavenDependencies(directory.resolve("missing-settings.xml"), null,
+                directory.resolve("cache"));
+
+        assertThatThrownBy(() -> dependencies.resolve(List.of("test.fixture:parent:1.0", invalid)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Invalid Maven dependency coordinate #2")
+                .hasMessageNotContaining(invalid);
+        assertThat(output.getOut()).contains("during dependency coordinate parsing (coordinate #2)")
+                .doesNotContain(invalid);
     }
 
     @Test void missingEnvironmentVariableInMirrorUrlHasActionableSafeError() throws Exception {

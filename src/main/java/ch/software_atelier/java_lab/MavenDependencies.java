@@ -108,8 +108,11 @@ final class MavenDependencies {
     List<Path> resolve(List<String> coordinates) {
         if (coordinates.isEmpty()) return List.of();
         Settings settings = null;
+        String phase = "settings loading";
+        int coordinateIndex = 0;
         try {
             settings = loadSettings();
+            phase = "local repository setup";
             DefaultRepositorySystemSession session = new DefaultRepositorySystemSession();
             Path local = settings.getLocalRepository() == null || settings.getLocalRepository().isBlank()
                     ? cache : Path.of(settings.getLocalRepository());
@@ -121,7 +124,9 @@ final class MavenDependencies {
                     new ScopeDependencySelector("test", "provided", "system"), new OptionalDependencySelector()));
             session.setConfigProperty("aether.connector.connectTimeout", 10000);
             session.setConfigProperty("aether.connector.requestTimeout", 30000);
+            phase = "mirror, server, and proxy setup";
             configureSelectors(session, settings);
+            phase = "repository selection";
             List<RemoteRepository> resolutionRepositories = system.newResolutionRepositories(session, repositories(settings));
             Set<String> missingEnv = missingEnvironmentVariables(settings, resolutionRepositories);
             if (!missingEnv.isEmpty())
@@ -132,11 +137,16 @@ final class MavenDependencies {
 
             CollectRequest request = new CollectRequest();
             request.setRepositories(resolutionRepositories);
-            for (String coordinate : coordinates)
+            phase = "dependency coordinate parsing";
+            for (String coordinate : coordinates) {
+                coordinateIndex++;
                 request.addDependency(new Dependency(new DefaultArtifact(coordinate), "compile"));
+            }
+            phase = "dependency collection";
             DependencyNode root = system.collectDependencies(session, request).getRoot();
             if (countNodes(root, new int[]{0}) > 100)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Too many transitive Maven dependencies (maximum 100)");
+            phase = "dependency resolution";
             var result = system.resolveDependencies(session,
                     new DependencyRequest(root, DependencyFilterUtils.classpathFilter("compile", "runtime")));
             var artifacts = result.getArtifactResults().stream().map(r -> r.getArtifact())
@@ -160,9 +170,17 @@ final class MavenDependencies {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Could not read Maven settings. Check ~/.m2/settings.xml and its active profiles.");
         } catch (IllegalArgumentException e) {
-            LOG.warn("Maven dependency setup failed. Causes: {}", failureDiagnostic(e));
+            // A Resolver message may contain repository URLs, usernames or passwords.
+            // The phase and ordinal locate the bad input without reproducing its value.
+            LOG.warn("Maven dependency setup failed during {}{}. Causes: {}",
+                    phase, "dependency coordinate parsing".equals(phase) ? " (coordinate #" + coordinateIndex + ")" : "",
+                    failureDiagnostic(e));
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Could not resolve Maven dependencies. Check the coordinates and Maven settings.");
+                    "dependency coordinate parsing".equals(phase)
+                            ? "Invalid Maven dependency coordinate #" + coordinateIndex
+                                    + ". Use groupId:artifactId:version."
+                            : "Could not resolve Maven dependencies during " + phase
+                                    + ". Check the coordinates and Maven settings.");
         }
     }
 
