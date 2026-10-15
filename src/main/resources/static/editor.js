@@ -45,19 +45,22 @@ window.JavaEditor = (() => {
     $('.completion-option.active',menu)?.scrollIntoView({block:'nearest'});
   }
 
-  async function request(editor, manual = false, fallback = null) {
+  async function request(editor, manual = false, fallback = null, refresh = false) {
     if (!editor.isConnected || !editor.closest('.code-editor') || editor.selectionStart!==editor.selectionEnd) return;
     const n=active();if(!n || n.running)return;
     const value=editor.value, cursor=editor.selectionStart, kernel=n.kernel;
-    dismiss();const version=generation;
+    if (refresh && completion?.editor===editor) { clearTimeout(timer); generation++; } // Refresh keeps the open popup visible.
+    else dismiss();
+    const version=generation;
     try {
       const result=await api(`/kernels/${kernel}/complete`,'POST',{code:value,cursor});
       if(version!==generation || document.activeElement!==editor || editor.value!==value || editor.selectionStart!==cursor || n!==active())return;
       if(!result.suggestions.length&&fallback){fallback();return;}
+      if(!result.suggestions.length && refresh){dismiss();return;}
       if(!result.suggestions.length && !manual)return;
       if(result.anchor<0 || result.anchor>cursor)return;
       completion={editor,value,cursor,anchor:result.anchor,items:result.suggestions,selected:0};render();
-    }catch(error){if(manual && version===generation)notify(error.message,true);}
+    }catch(error){if(manual && version===generation)notify(error.message,true);else if(refresh && version===generation)dismiss();}
   }
 
   async function inspect(editor) {
@@ -92,9 +95,12 @@ window.JavaEditor = (() => {
 
   $('#cells').addEventListener('input',event=>{
     const editor=event.target;if(!editor.matches('.code-editor textarea'))return;
-    dismiss();if(event.isComposing)return;
+    if(event.isComposing){dismiss();return;}
     const before=editor.value.slice(0,editor.selectionStart);
-    if (/(?:\.|[a-zA-Z_$][\w$]{1,})$/.test(before)) timer=setTimeout(()=>request(editor),300);
+    if(!/(?:\.|[A-Za-z0-9_$])$/.test(before)){dismiss();return;}
+    clearTimeout(timer);
+    if(completion?.editor===editor) timer=setTimeout(()=>request(editor,false,null,true),80); // Keep the open list while typing.
+    else { dismiss(); timer=setTimeout(()=>request(editor),300); }
   });
   document.addEventListener('keydown',event=>{
     const editor=event.target;
