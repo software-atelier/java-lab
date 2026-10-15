@@ -457,8 +457,21 @@ final class MavenDependencies {
 
     private static org.eclipse.aether.repository.RepositoryPolicy policy(org.apache.maven.settings.RepositoryPolicy source) {
         if (source == null) return new org.eclipse.aether.repository.RepositoryPolicy();
+        var defaults = new org.eclipse.aether.repository.RepositoryPolicy();
+        String updatePolicy = source.getUpdatePolicy();
+        if (updatePolicy == null || updatePolicy.isBlank()) updatePolicy = defaults.getUpdatePolicy();
+        else if (!updatePolicy.equals("always") && !updatePolicy.equals("daily")
+                && !updatePolicy.equals("never") && !updatePolicy.matches("interval:[0-9]+"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid Maven repository update policy. Use always, daily, never, or interval:<minutes>.");
+        String checksumPolicy = source.getChecksumPolicy();
+        if (checksumPolicy == null || checksumPolicy.isBlank()) checksumPolicy = defaults.getChecksumPolicy();
+        else if (!checksumPolicy.equals("fail") && !checksumPolicy.equals("warn")
+                && !checksumPolicy.equals("ignore"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid Maven repository checksum policy. Use fail, warn, or ignore.");
         return new org.eclipse.aether.repository.RepositoryPolicy(source.isEnabled(),
-                source.getUpdatePolicy(), source.getChecksumPolicy());
+                updatePolicy, checksumPolicy);
     }
 
     private static Path globalSettingsPath() {

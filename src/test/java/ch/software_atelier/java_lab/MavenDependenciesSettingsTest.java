@@ -86,6 +86,45 @@ class MavenDependenciesSettingsTest {
         assertThat(jars).allMatch(path -> path.startsWith(localRepository));
     }
 
+    @Test void usesDefaultPoliciesWhenProfileRepositoryOmitsUpdateAndChecksumPolicies() throws Exception {
+        Path repository = directory.resolve("repository-with-default-policies");
+        writeArtifacts(repository);
+        Path settings = writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <profiles><profile><id>private-repo</id><repositories><repository>
+                    <id>fixture</id><url>%s</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                  </repository></repositories></profile></profiles>
+                  <activeProfiles><activeProfile>private-repo</activeProfile></activeProfiles>
+                  <mirrors><mirror><id>fixture-mirror</id><mirrorOf>*</mirrorOf>
+                    <url>%s</url></mirror></mirrors>
+                </settings>
+                """.formatted(repository.toUri(), repository.toUri()));
+
+        assertThat(resolver(settings).resolve(List.of("test.fixture:parent:1.0")))
+                .extracting(path -> path.getFileName().toString())
+                .containsExactlyInAnyOrder("parent-1.0.jar", "child-1.0.jar");
+    }
+
+    @Test void rejectsUnsupportedChecksumPolicyWithoutEchoingItsValue() throws Exception {
+        String unsupported = "sensitive-unsupported-policy";
+        Path settings = writeSettings("""
+                <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+                  <profiles><profile><id>private-repo</id><repositories><repository>
+                    <id>fixture</id><url>file:///unused/</url>
+                    <releases><checksumPolicy>%s</checksumPolicy></releases>
+                  </repository></repositories></profile></profiles>
+                  <activeProfiles><activeProfile>private-repo</activeProfile></activeProfiles>
+                </settings>
+                """.formatted(unsupported));
+
+        assertThatThrownBy(() -> resolver(settings).resolve(List.of("test.fixture:parent:1.0")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Invalid Maven repository checksum policy")
+                .hasMessageNotContaining(unsupported);
+    }
+
     @Test void appliesMirrorAndAuthenticatesPlainAndEncryptedServerPassword() throws Exception {
         Path repository = directory.resolve("repository");
         writeArtifacts(repository);
