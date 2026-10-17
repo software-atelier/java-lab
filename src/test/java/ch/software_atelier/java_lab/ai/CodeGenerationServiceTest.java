@@ -18,10 +18,10 @@ class CodeGenerationServiceTest {
         var service = new CodeGenerationService(provider, List.of(new JavaRuntimeContext(), new ChartContext(), new EChartsContext(), new GridContext(), new DataFormatsContext(), custom), mapper);
         var target = new CodeGeneration.Target("int value = 1;", 12, 13);
         var request = new CodeGeneration.Request("Use 42", target, List.of(new CodeGeneration.ContextItem("notes", "User notes", "Keep the name value", Map.of("language", "java"))));
-        when(provider.generate(anyList())).thenReturn(new CodeGeneration.Result("42", "test/model"));
+        when(provider.generate(anyList(), isNull(), any(CodeGeneration.Observer.class), same(target))).thenReturn(new CodeGeneration.Result("42", "test/model"));
         assertThat(service.generate(request).code()).isEqualTo("42");
         @SuppressWarnings("unchecked") var messages = (org.mockito.ArgumentCaptor<List<CodeGeneration.Message>>) (Object) org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(provider).generate(messages.capture());
+        verify(provider).generate(messages.capture(), isNull(), any(CodeGeneration.Observer.class), same(target));
         assertThat(messages.getValue()).hasSize(3);
         assertThat(messages.getValue().get(0).role()).isEqualTo("system");
         String context = messages.getValue().get(1).content();
@@ -53,13 +53,13 @@ class CodeGenerationServiceTest {
         int overhead = mapper.writeValueAsString(base).length() + mapper.writeValueAsString(provided).length();
         var atLimit = new CodeGeneration.ContextItem("notes", "User note", "x".repeat(200_000 - overhead), Map.of());
         var service = new CodeGenerationService(provider, List.of(request -> List.of(provided)), mapper);
-        when(provider.generate(anyList())).thenReturn(new CodeGeneration.Result("ok", "test/model"));
+        when(provider.generate(anyList(), isNull(), any(CodeGeneration.Observer.class), same(target))).thenReturn(new CodeGeneration.Result("ok", "test/model"));
         assertThat(service.generate(new CodeGeneration.Request("Edit", target, List.of(atLimit))).code()).isEqualTo("ok");
         var overLimit = new CodeGeneration.ContextItem("notes", "User note", "x".repeat(200_001 - overhead), Map.of());
         assertThatThrownBy(() -> service.generate(new CodeGeneration.Request("Edit", target, List.of(overLimit))))
             .isInstanceOf(ResponseStatusException.class)
             .hasMessageContaining("200,000-character budget");
-        verify(provider, times(1)).generate(anyList());
+        verify(provider, times(1)).generate(anyList(), isNull(), any(CodeGeneration.Observer.class), same(target));
     }
 
     @Test void configurationExposesOnlyAvailabilityProviderAndModel() throws Exception {
@@ -68,5 +68,32 @@ class CodeGenerationServiceTest {
         when(provider.model()).thenReturn("test/model");
         var service = new CodeGenerationService(provider, List.of(), mapper);
         assertThat(mapper.writeValueAsString(service.configuration())).isEqualTo("{\"configured\":false,\"provider\":\"OpenAI-compatible API\",\"model\":\"test/model\"}");
+    }
+
+    @Test void bindsToolsToTheRequestedKernelAndUsesTheNotebookReusePrompt() {
+        var sessions = mock(SessionTools.class);
+        var tools = mock(CodeGeneration.Tools.class);
+        String kernel = "12345678-1234-1234-1234-123456789012";
+        when(sessions.forKernel(kernel)).thenReturn(tools);
+        when(provider.generate(anyList(), same(tools), any(CodeGeneration.Observer.class), any())).thenReturn(new CodeGeneration.Result("int answer = 42;", "test"));
+        var service = new CodeGenerationService(provider, List.of(), mapper, sessions);
+        assertThat(service.generate(new CodeGeneration.Request("Reuse data", new CodeGeneration.Target("", null, null), null, kernel)).code()).contains("42");
+        @SuppressWarnings("unchecked") var messages = (org.mockito.ArgumentCaptor<List<CodeGeneration.Message>>) (Object) org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(provider).generate(messages.capture(), same(tools), any(CodeGeneration.Observer.class), any());
+        assertThat(messages.getValue().get(0).content()).contains("top-level", "Do not repeat imports", "Do not duplicate existing",
+            "without being displayed", "private fields", "session overview");
+        verify(sessions).forKernel(kernel);
+    }
+
+    @Test void failedGenerationsFinalizeProgressWithoutPublishingSensitiveErrorDetails() {
+        var service = new CodeGenerationService(provider, List.of(), mapper);
+        String requestId = java.util.UUID.randomUUID().toString();
+        when(provider.generate(anyList(), isNull(), any(CodeGeneration.Observer.class), any())).thenThrow(new IllegalStateException("private provider detail"));
+        assertThatThrownBy(() -> service.generate(new CodeGeneration.Request("Edit", new CodeGeneration.Target("", null, null), null, null, requestId)))
+            .isInstanceOf(IllegalStateException.class);
+        var snapshot = service.progress(requestId);
+        assertThat(snapshot.done()).isTrue();
+        assertThat(snapshot.events()).extracting(GenerationProgress.Event::activity).contains("Code generation failed.");
+        assertThat(snapshot.toString()).doesNotContain("private provider detail");
     }
 }

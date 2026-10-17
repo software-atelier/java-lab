@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.jar.JarFile;
 
 @Service
 public class KernelService implements AutoCloseable {
@@ -39,7 +40,7 @@ public class KernelService implements AutoCloseable {
     public String create() {
         if (kernels.size() >= 32) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many kernels; close unused notebooks");
         String id = UUID.randomUUID().toString();
-        kernels.put(id, new Kernel(classpath.resolve(), Map.of(), Set.of()));
+        kernels.put(id, new Kernel(classpath.resolve(), Map.of(), Set.of(), dataDirectory()));
         return id;
     }
 
@@ -52,11 +53,14 @@ public class KernelService implements AutoCloseable {
         List<Path> jars = dependencies.resolve(settings.dependencies());
         String cp = classpath.resolve() + jars.stream().map(path -> File.pathSeparator + path).collect(java.util.stream.Collectors.joining());
         Set<String> secrets = settings.variables().stream().filter(NotebookSettings.Variable::secret).map(v -> values.get(v.name())).filter(v -> v != null && !v.isEmpty()).collect(java.util.stream.Collectors.toSet());
-        Kernel kernel = new Kernel(cp, values, secrets);
+        Kernel kernel = new Kernel(cp, values, secrets, dataDirectory());
+        kernel.dependencies = List.copyOf(settings.dependencies());
         String id = UUID.randomUUID().toString();
         kernels.put(id, kernel);
         return id;
     }
+
+    private Path dataDirectory() { return Path.of(notebooks == null ? System.getProperty("user.dir") : notebooks.directory()).toAbsolutePath(); }
 
     public Result execute(String id, String code) {
         return execute(id, code, null);
@@ -161,6 +165,32 @@ public class KernelService implements AutoCloseable {
         catch(InterruptedException e){Thread.currentThread().interrupt();throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Inspection interrupted");}
         catch(ExecutionException e){throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Kernel unavailable; restart it to restore inspection");}
     }
+
+    /** Structured AI inspection, serialized with all other work in this notebook's JVM. */
+    public Object inspectSession(String id, String operation, com.fasterxml.jackson.databind.JsonNode arguments) {
+        Kernel kernel = get(id);
+        synchronized (kernel) {
+            if (kernel.closed || !kernel.busy.compareAndSet(false, true))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Session inspection is available when the kernel is idle");
+            kernel.generation++;
+        }
+        kernel.lastUsed = System.currentTimeMillis();
+        Future<Object> task = kernel.executor.submit(() -> {
+            try { return kernel.redact(kernel.inspectSession(operation, arguments)); }
+            finally { kernel.busy.set(false); kernel.lastUsed = System.currentTimeMillis(); }
+        });
+        try { return task.get(5, TimeUnit.SECONDS); }
+        catch (TimeoutException e) {
+            interrupt(id);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Session inspection timed out");
+        } catch (InterruptedException e) {
+            interrupt(id);
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Session inspection interrupted");
+        } catch (ExecutionException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session inspection failed; check the variable, path, or class name");
+        }
+    }
     private Kernel get(String id) {
         Kernel kernel = kernels.get(id);
         if (kernel == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Kernel expired. Restart the kernel to continue.");
@@ -183,6 +213,10 @@ public class KernelService implements AutoCloseable {
         final ByteArrayOutputStream stdout = new LimitedOutput();
         final ByteArrayOutputStream stderr = new LimitedOutput();
         final JShell shell;
+        final String classpath;
+        List<String> dependencies = List.of();
+        List<Map<String,String>> libraryClasses;
+        List<Map<String,Object>> libraries;
         final List<String> secretValues;
         final ExecutorService executor = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "java-lab-kernel"); t.setDaemon(true); return t; });
         final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean();
@@ -191,11 +225,12 @@ public class KernelService implements AutoCloseable {
         volatile long generation;
         volatile boolean closed;
 
-        Kernel(String classpath, Map<String,String> variables, Set<String> secrets) {
+        Kernel(String classpath, Map<String,String> variables, Set<String> secrets, Path dataDirectory) {
+            this.classpath = classpath;
             secretValues = secrets.stream().sorted(Comparator.comparingInt(String::length).reversed()).toList();
             shell = JShell.builder().out(new PrintStream(stdout, true, StandardCharsets.UTF_8))
                 .err(new PrintStream(stderr, true, StandardCharsets.UTF_8))
-                .remoteVMOptions("-Djava.awt.headless=true").build();
+                .remoteVMOptions("-Djava.awt.headless=true", "\"-Duser.dir=" + dataDirectory.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"").build();
             shell.addToClasspath(classpath);
             shell.eval("import java.util.*;");
             shell.eval("import java.util.stream.*;");
@@ -211,8 +246,10 @@ public class KernelService implements AutoCloseable {
             shell.eval("import ch.software_atelier.java_lab.display.Grid;");
             shell.eval("import ch.software_atelier.java_lab.display.Formatted;");
             shell.eval("import ch.software_atelier.java_lab.display.Forms;");
+            shell.eval("import ch.software_atelier.java_lab.display.Images;");
             shell.eval("import org.json.*;");
             shell.eval("import org.apache.commons.csv.*;");
+            shell.eval("import ch.software_atelier.java_lab.data.Csv;");
             shell.eval("import org.apache.commons.io.input.BOMInputStream;");
             shell.eval("void log(String msg, Object... args) { ch.software_atelier.java_lab.display.Logs.log(msg, args); }");
             shell.eval("java.util.Map<String,String> __labVars = new java.util.HashMap<>();");
@@ -224,6 +261,103 @@ public class KernelService implements AutoCloseable {
             }
             shell.eval("String labVar(String name) { return __labVars.get(name); }");
             shell.eval("String requireLabVar(String name) { String value = __labVars.get(name); if (value == null) throw new IllegalArgumentException(\"Missing notebook variable: \" + name); return value; }");
+        }
+
+        Object inspectSession(String operation, com.fasterxml.jackson.databind.JsonNode args) throws IOException {
+            return switch (operation) {
+                case "session_overview" -> {
+                    indexLibraries();
+                    int offset = Math.max(0, args.path("offset").asInt());
+                    int limit = Math.max(1, Math.min(50, args.path("limit").asInt(50)));
+                    var variables = shell.variables().filter(v -> visible(v.name()) && shell.status(v).isDefined())
+                        .map(v -> Map.of("name", v.name(), "type", v.typeName())).toList();
+                    var imports = shell.imports().filter(i -> shell.status(i).isActive()).map(ImportSnippet::source).toList();
+                    var methods = shell.methods().filter(m -> visible(m.name()) && shell.status(m).isDefined())
+                        .map(m -> Map.of("name", m.name(), "signature", m.signature())).toList();
+                    var types = shell.types().filter(t -> shell.status(t).isDefined()).map(TypeDeclSnippet::name).toList();
+                    yield Map.of("variables", page(variables, offset, limit), "imports", page(imports, offset, limit),
+                        "methods", page(methods, offset, limit), "types", page(types, offset, limit),
+                        "libraries", page(libraries, offset, limit), "dependencies", dependencies,
+                        "totals", Map.of("variables", variables.size(), "imports", imports.size(), "methods", methods.size(), "types", types.size(), "libraries", libraries.size()),
+                        "offset", offset, "limit", limit,
+                        "note", "Metadata only. Paginate each category using offset and limit. Use inspect_variable to read current values without printing them. Paths use selectors returned by that tool. No arbitrary getters or expressions are evaluated.");
+                }
+                case "inspect_variable" -> {
+                    String name = args.path("variable").asText();
+                    var variable = shell.variables().filter(v -> visible(v.name()) && v.name().equals(name) && shell.status(v).isDefined()).findFirst();
+                    if (variable.isEmpty()) yield Map.of("error", "Variable is not defined in the current session");
+                    yield remoteInspection("inspect(" + variable.get().name() + ",", args);
+                }
+                case "search_library_classes" -> {
+                    indexLibraries();
+                    String query = args.path("query").asText().toLowerCase(Locale.ROOT);
+                    int offset = Math.max(0, args.path("offset").asInt());
+                    var matches = libraryClasses.stream().filter(c -> c.get("className").toLowerCase(Locale.ROOT).contains(query)).toList();
+                    yield Map.of("classes", matches.stream().skip(offset).limit(40).toList(), "total", matches.size(),
+                        "hasMore", (long) offset + 40 < matches.size());
+                }
+                case "inspect_class" -> {
+                    var localType = shell.types().filter(t -> t.name().equals(args.path("className").asText()) && shell.status(t).isDefined()).findFirst();
+                    yield remoteInspection(localType.map(t -> "api(" + t.name() + ".class,").orElse("api("), args);
+                }
+                default -> Map.of("error", "Unknown inspection tool");
+            };
+        }
+
+        private boolean visible(String name) { return !name.equals("__labVars") && !name.matches("\\$\\d+"); }
+
+        private <T> List<T> page(List<T> values, int offset, int limit) { return values.stream().skip(offset).limit(limit).toList(); }
+
+        private Object remoteInspection(String invocation, com.fasterxml.jackson.databind.JsonNode args) throws IOException {
+            var request = (com.fasterxml.jackson.databind.node.ObjectNode) args.deepCopy();
+            request.set("__secretValues", JSON.valueToTree(secretValues));
+            String encoded = Base64.getEncoder().encodeToString(JSON.writeValueAsBytes(request));
+            var events = shell.eval("ch.software_atelier.java_lab.display.SessionInspector." + invocation + "\"" + encoded + "\")");
+            try {
+                for (var event : events) {
+                    if (event.exception() != null || event.status() == Snippet.Status.REJECTED) throw new IOException("Inspection failed");
+                    String value = event.value();
+                    if (value != null && value.startsWith("\"") && value.endsWith("\"")) {
+                        byte[] bytes = Base64.getDecoder().decode(value.substring(1, value.length() - 1));
+                        return JSON.readValue(bytes, Object.class);
+                    }
+                }
+                throw new IOException("No inspection result");
+            } finally {
+                for (var event : events) if (event.snippet() instanceof VarSnippet) shell.drop(event.snippet());
+                stdout.reset(); stderr.reset();
+            }
+        }
+
+        private void indexLibraries() throws IOException {
+            if (libraryClasses != null) return;
+            var classes = new ArrayList<Map<String,String>>();
+            var jars = new ArrayList<Map<String,Object>>();
+            for (String entry : classpath.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                Path path = Path.of(entry);
+                if (!entry.endsWith(".jar")) continue;
+                try (var jar = new JarFile(path.toFile())) {
+                    var coordinates = new ArrayList<String>();
+                    var entries = jar.entries();
+                    while (entries.hasMoreElements()) {
+                        var item = entries.nextElement();
+                        String name = item.getName();
+                        if (name.startsWith("META-INF/maven/") && name.endsWith("/pom.properties")) {
+                            var properties = new Properties();
+                            try (var input = jar.getInputStream(item)) { properties.load(input); }
+                            coordinates.add(properties.getProperty("groupId", "") + ":" + properties.getProperty("artifactId", "") + ":" + properties.getProperty("version", ""));
+                        }
+                        if (name.endsWith(".class") && !name.startsWith("META-INF/") && !name.endsWith("module-info.class") && !name.endsWith("package-info.class"))
+                            classes.add(Map.of("className", name.substring(0, name.length() - 6).replace('/', '.'), "library", path.getFileName().toString()));
+                    }
+                    var manifest = jar.getManifest();
+                    String version = manifest == null ? "" : Objects.toString(manifest.getMainAttributes().getValue("Implementation-Version"), "");
+                    jars.add(Map.of("jar", path.getFileName().toString(), "coordinates", coordinates, "version", version));
+                }
+            }
+            classes.sort(Comparator.comparing(c -> c.get("className")));
+            libraries = List.copyOf(jars);
+            libraryClasses = List.copyOf(classes);
         }
 
         Completions complete(String code, int cursor) {
@@ -370,7 +504,7 @@ public class KernelService implements AutoCloseable {
                         byte[] content = data.readNBytes(size);
                         if (content.length != size) throw new IOException("Incomplete chart output");
                         Object value;
-                        if (mime.equals("image/png")) value = Base64.getEncoder().encodeToString(content);
+                        if (Set.of("image/png","image/jpeg","image/gif","image/bmp","image/webp","image/svg+xml").contains(mime)) value = Base64.getEncoder().encodeToString(content);
                         else if (mime.equals("application/vnd.apache.echarts+json")) {
                             var option = JSON.readTree(content);
                             if (option == null || !option.isObject()) throw new IOException("ECharts option must be a JSON object");

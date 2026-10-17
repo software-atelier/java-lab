@@ -2,16 +2,99 @@
 window.Vibecode = (() => {
   const dialog = $('#vibe-dialog');
   const history = new WeakMap();
+  const diagnosticsByCell = new WeakMap();
   const MAX_OUTPUT_CHARS = 12000;
   const MAX_NOTEBOOK_OUTPUT_CHARS = 64000;
   const FIX_ERROR_PROMPT = 'Fix the execution error in this Java cell. Use the current cell diagnostics and preceding notebook context to identify the cause. Return the complete corrected cell. Preserve the intended behavior and change only what is needed.';
   let edit = null, controller = null, generation = 0;
+  let progressSession = null;
+  let diagnosticsController = null;
+
+  function formatDiagnostics(items) {
+    const count=value=>Number.isSafeInteger(value) && value>=0?String(value):'not reported';
+    return items.map(item=>`Request ${item.request}\nConfigured model: ${item.configuredModel || 'not reported'}\nReported model: ${item.reportedModel || 'not reported'}\nOutput limit: ${count(item.maxTokens)} tokens\nFinish reason: ${item.finishReason || 'not reported'}\nInput tokens: ${count(item.inputTokens)}\nOutput tokens: ${count(item.outputTokens)}\nReasoning tokens: ${count(item.reasoningTokens)}`).join('\n\n');
+  }
+
+  function renderDiagnostics(items,expanded=false) {
+    const diagnostics=Array.isArray(items)?items:[];
+    $('#vibe-diagnostics').hidden=!diagnostics.length;
+    $('#vibe-diagnostics').open=expanded;
+    $('#vibe-diagnostics-text').textContent=formatDiagnostics(diagnostics);
+  }
+
+  function rememberDiagnostics(items,cell) {
+    if(!Array.isArray(items) || !items.length)return;
+    diagnosticsByCell.set(cell,items);
+    $('#vibe-progress-diagnostics').textContent=formatDiagnostics(items);
+    $('#vibe-progress-diagnostics').hidden=false;
+  }
+
+  function fetchFinalDiagnostics(requestId,version,cell) {
+    if(!requestId)return;
+    diagnosticsController?.abort();
+    const pending=new AbortController();diagnosticsController=pending;
+    api(`/ai/progress/${encodeURIComponent(requestId)}`,'GET',undefined,{signal:pending.signal,cache:'no-store'}).then(snapshot=>{
+      if(version!==generation || diagnosticsController!==pending)return;
+      rememberDiagnostics(snapshot?.diagnostics,cell);
+      renderDiagnostics(diagnosticsByCell.get(cell),true);
+    }).catch(()=>{/* The original generation error remains visible even if diagnostics cannot be retrieved. */});
+  }
+
+  function generationRequestId() {
+    if(window.crypto?.randomUUID)return window.crypto.randomUUID();
+    // getRandomValues is also available on HTTP origins where randomUUID may be unavailable.
+    if(!window.crypto?.getRandomValues)return null;
+    const bytes=window.crypto.getRandomValues(new Uint8Array(16));
+    bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+    const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  }
+
+  function stopProgress() {
+    if(!progressSession)return;
+    clearTimeout(progressSession.timer);progressSession.controller.abort();progressSession=null;
+  }
+
+  function startProgress(requestId,version,cell) {
+    stopProgress();
+    diagnosticsController?.abort();diagnosticsController=null;
+    diagnosticsByCell.delete(cell);
+    renderDiagnostics([]);
+    $('#vibe-progress-popup').hidden=false;
+    $('#vibe-progress-activity').textContent='Submitting generation request…';
+    $('#vibe-progress-log').textContent='Waiting for live activity…';
+    $('#vibe-progress-diagnostics').textContent='';$('#vibe-progress-diagnostics').hidden=true;
+    if(!requestId)return;
+    const session={controller:new AbortController(),timer:null};
+    progressSession=session;
+    const current=()=>progressSession===session && version===generation;
+    async function poll() {
+      if(!current())return;
+      let done=false;
+      try {
+        const snapshot=await api(`/ai/progress/${encodeURIComponent(requestId)}`,'GET',undefined,{signal:session.controller.signal,cache:'no-store'});
+        if(!current())return;
+        const events=Array.isArray(snapshot?.events)?snapshot.events:[];
+        const seconds=ms=>`${Math.floor(Math.max(0,Number(ms)||0)/1000)}s`;
+        if(events.length) {
+          $('#vibe-progress-activity').textContent=events[events.length-1].activity;
+          $('#vibe-progress-log').textContent=`Elapsed: ${seconds(snapshot.elapsedMillis)}\n\n`+events.map(event=>`${seconds(event.elapsedMillis)} · ${String(event.activity)}`).join('\n');
+        }
+        rememberDiagnostics(snapshot?.diagnostics,cell);
+        done=!!snapshot?.done;
+      }catch(e){/* A late registration or failed progress poll must not interrupt code generation. */}
+      if(current() && !done)session.timer=setTimeout(poll,750);
+    }
+    // Let the POST register the request before polling. Only one poll is in flight at a time.
+    session.timer=setTimeout(poll,300);
+  }
 
   function close() {
-    generation++;controller?.abort();controller=null;edit=null;dialog.close();
+    stopProgress();diagnosticsController?.abort();diagnosticsController=null;generation++;controller?.abort();controller=null;edit=null;dialog.close();
   }
   function error(message) {$('#vibe-error').textContent=message;$('#vibe-error').hidden=false;}
   function loading(value) {
+    if(!value)stopProgress();
     $('#vibe-progress').hidden=!value;
     $('#vibe-generate').disabled=value;
     $('#vibe-prompt').disabled=value;
@@ -33,6 +116,7 @@ window.Vibecode = (() => {
     $('#vibe-context-count').textContent=`(${n.selected})`;
     $('#vibe-prompt').value=fixError?FIX_ERROR_PROMPT:'';$('#vibe-context-notes').value='';$('#vibe-error').hidden=true;
     $('#vibe-model').textContent='AI · loading configuration…';loading(false);
+    renderDiagnostics(diagnosticsByCell.get(c));
     $('#vibe-generate').disabled=true;
     window.JavaEditor?.dismiss();dialog.showModal();$('#vibe-prompt').focus();
     try {
@@ -68,7 +152,7 @@ window.Vibecode = (() => {
         return {type:'grid',text:`${grid.title || 'Grid table'}\n${lines.join('\n')}`,rowsTotal:grid.data.length,rowsIncluded:included};
       }
       // Chart options and base64 images are large and do not help with textual follow-up edits.
-      if(data['image/png'] || data['application/vnd.apache.echarts+json'])return null;
+      if(Object.keys(data).some(type=>type.startsWith('image/')) || data['application/vnd.apache.echarts+json'])return null;
       if(data['text/plain'] != null)return {type:'text',text:plain(data['text/plain'])};
     }
     return null;
@@ -134,13 +218,18 @@ window.Vibecode = (() => {
     if(!state.notebooks.includes(current.notebook)||!current.notebook.document.cells.includes(current.cell)||current.cell.cell_type!=='code'||source(current.cell)!==current.original||current.notebook.running||(current.errorOutputs && current.cell.outputs!==current.errorOutputs)){error('The target cell changed before generating. Your current code was kept; request the edit again.');return;}
     let context;
     try{context=contextFor(current);}catch(e){error(e.message);return;}
-    const request={prompt,target:{source:current.original,start:current.start,end:current.end},context};
+    const kernel=current.notebook.kernel;
+    const requestId=generationRequestId();
+    const request={prompt,target:{source:current.original,start:current.start,end:current.end},context,...(kernel?{kernelId:kernel}:{}),...(requestId?{requestId}:{})};
     controller=new AbortController();const version=generation;loading(true);$('#vibe-error').hidden=true;
     try {
-      const result=await api('/ai/generate','POST',request,{signal:controller.signal});
+      const pending=api('/ai/generate','POST',request,{signal:controller.signal});
+      startProgress(requestId,version,current.cell);
+      const result=await pending;
       if(version!==generation)return;
+      rememberDiagnostics(result.diagnostics,current.cell);
       const {notebook:n,cell:c,original,start,end}=current;
-      if(!state.notebooks.includes(n)||!n.document.cells.includes(c)||c.cell_type!=='code'||source(c)!==original||n.running||(current.errorOutputs && c.outputs!==current.errorOutputs))
+      if(!state.notebooks.includes(n)||!n.document.cells.includes(c)||c.cell_type!=='code'||source(c)!==original||n.running||n.kernel!==kernel||(current.errorOutputs && c.outputs!==current.errorOutputs))
         throw new Error('The target cell changed while generating. Your current code was kept; request the edit again.');
       if(typeof result.code!=='string'||!result.code.trim())throw new Error('The model returned no code.');
       const replacement=start===null?result.code:original.slice(0,start)+result.code+original.slice(end);
@@ -150,7 +239,10 @@ window.Vibecode = (() => {
       n.selected=n.document.cells.indexOf(c);markDirty(n);close();
       if(active()===n){renderCells();selectCell(n.selected,true);}
       notify('AI edit applied · use “Undo AI edit” on the cell to restore');
-    }catch(e){if(version===generation && e.name!=='AbortError')error(e.message);}
+    }catch(e){if(version===generation && e.name!=='AbortError'){
+      error(e.message);renderDiagnostics(diagnosticsByCell.get(current.cell),true);
+      fetchFinalDiagnostics(requestId,version,current.cell);
+    }}
     finally{if(version===generation){controller=null;loading(false);}}
   }
 
@@ -163,6 +255,13 @@ window.Vibecode = (() => {
     history.delete(c);markDirty(n);renderCells();selectCell(n.selected,true);notify('AI edit undone');
   }
   $('#vibe-form').addEventListener('submit',generate);
+  $('#vibe-progress').addEventListener('mouseenter',()=>{$('#vibe-progress-popup').hidden=false;});
+  $('#vibe-progress').addEventListener('focusin',()=>{$('#vibe-progress-popup').hidden=false;});
+  $('#vibe-progress').addEventListener('keydown',event=>{
+    if(event.key==='Escape' && !$('#vibe-progress-popup').hidden) {
+      event.preventDefault();event.stopPropagation();$('#vibe-progress-popup').hidden=true;
+    }
+  });
   $('#vibe-close').onclick=$('#vibe-cancel').onclick=close;
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   return {open,fixError:()=>open(true),canUndo,undo};

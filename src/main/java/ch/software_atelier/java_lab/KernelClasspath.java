@@ -20,6 +20,10 @@ final class KernelClasspath implements AutoCloseable {
                 for(String library:LIBRARIES)copy("kernel-runtime/"+library+".jar",directory.resolve(library+".jar"));
                 for (Class<?> helper : new Class<?>[]{ch.software_atelier.java_lab.display.Charts.class, ch.software_atelier.java_lab.display.Display.class, ch.software_atelier.java_lab.display.ECharts.class, ch.software_atelier.java_lab.display.Logs.class, ch.software_atelier.java_lab.display.Formatted.class, ch.software_atelier.java_lab.display.Forms.class}) copyClass(helper);
                 copyClass(ch.software_atelier.java_lab.display.Grid.class);
+                copyClass(ch.software_atelier.java_lab.display.SessionInspector.class);
+                copyClass(ch.software_atelier.java_lab.data.Csv.class);
+                copyClass(ch.software_atelier.java_lab.data.XmlDocuments.class);
+                copyClass(ch.software_atelier.java_lab.display.Images.class);
                 copy("ch/software_atelier/java_lab/display/JsonOptions.class", directory.resolve("classes/ch/software_atelier/java_lab/display/JsonOptions.class"));
             }
             return directory.resolve("classes") + File.pathSeparator + LIBRARIES.stream().map(name->directory.resolve(name+".jar").toString()).collect(Collectors.joining(File.pathSeparator));

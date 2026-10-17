@@ -93,7 +93,7 @@ Regular typing, text selection, word movement, Home/End, and platform clipboard 
 
 | Keys | Action |
 | --- | --- |
-| Ctrl / Cmd + S | Save current notebook |
+| Ctrl / Cmd + S | Save current notebook, CSV or text file |
 | Ctrl / Cmd + Shift + S | Save a notebook copy under another name |
 | Ctrl / Cmd + F / H | Find / find and replace notebook source |
 | Ctrl / Cmd + G / Shift + G | Next / previous source match |
@@ -102,16 +102,28 @@ Regular typing, text selection, word movement, Home/End, and platform clipboard 
 | Ctrl / Cmd + Shift + H | Show shortcuts |
 | Ctrl / Cmd + B | Toggle left sidebar; Markdown editor's bold binding takes precedence |
 | Ctrl / Cmd + Shift + F / Alt + 1 | Open/focus file browser |
-| Alt + W / Ctrl + Shift + Q | Close notebook tab and its kernel |
-| Ctrl / Cmd + Shift + [ / ] | Activate preceding / following notebook tab |
-| Ctrl / Cmd + Shift + T | Reopen the most recently closed notebook |
+| Alt + W / Ctrl + Shift + Q | Close the active document tab (and a notebook's kernel) |
+| Ctrl / Cmd + Shift + [ / ] | Activate preceding / following notebook, CSV or text tab |
+| Ctrl / Cmd + Shift + T | Reopen the most recently closed document |
 | Ctrl / Cmd + Shift + D outside the editor | Toggle simple interface |
 | Ctrl / Cmd + P | Print notebook |
 | Alt + N | New Java notebook (Java Lab shortcut) |
 | ↑ / ↓ on a file row | Focus preceding / following file |
-| Enter on a notebook row | Open notebook |
-| F2 on a notebook row | Rename notebook |
+| Enter on a file row | Open its editor tab, or download an unsupported file type |
+| F2 on a file row or active document | Rename any file |
 | Delete on a notebook row | Delete notebook via the existing dialog |
 | Ctrl / Cmd + D on a notebook row | Duplicate notebook file |
 
 Shortcuts do not treat letters typed in search fields, Grid.js filters, dialogs, or other form inputs as cell commands. Browser/OS-reserved keys depend on whether the browser delivers the event. Jupyter actions for terminals, debuggers, settings extensions, or additional dock panels are outside Java Lab's current notebook interface and are not remapped to unrelated commands.
+
+## Text-file tabs
+
+| Keys | Action |
+| --- | --- |
+| Tab / Shift + Tab | Indent / outdent text |
+| Enter | Auto-indent; expand structural blocks |
+| Ctrl / Cmd + F | Focus in-file search; Enter / Shift + Enter find next / previous |
+| Alt + Shift + F | Format JSON / XML |
+| Ctrl / Cmd + Z / Shift + Z; Ctrl + Y | Undo / redo typing and assisted edits |
+
+JSON/XML/TXT and common source files use independent text-editor tabs with syntax highlighting, line numbers and explicit save. Native notebook command-mode letters do not operate on these tabs. Format/Validate are explicit operations; invalid draft text may still be saved.

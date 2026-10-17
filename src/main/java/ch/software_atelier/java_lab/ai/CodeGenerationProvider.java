@@ -8,4 +8,19 @@ public interface CodeGenerationProvider {
     boolean configured();
     String model();
     CodeGeneration.Result generate(List<CodeGeneration.Message> messages);
+    default CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools) {
+        return generate(messages);
+    }
+    default CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools, java.util.function.Consumer<String> progress) {
+        progress.accept("Waiting for the AI model…");
+        return tools == null ? generate(messages) : generate(messages, tools);
+    }
+    default CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools,
+                                          CodeGeneration.Observer observer, CodeGeneration.Target target) {
+        var result = generate(messages, tools, observer);
+        if (JavaSnippetValidator.problem(target, result.code()) != null)
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_GATEWAY,
+                "The model returned incomplete or malformed Java. Your original cell was kept.");
+        return result;
+    }
 }

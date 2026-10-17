@@ -22,14 +22,16 @@ window.NotebookControls = (() => {
     ['Edit','Ctrl / Cmd D, Ctrl / Cmd Shift K','Delete line'],['Edit','Ctrl / Cmd Shift D','Select next occurrence'],
     ['Edit','Ctrl / Cmd B','Toggle Markdown bold'],['Edit','Ctrl / Cmd Z','Undo text edit'],['Edit','Ctrl / Cmd Shift Z / Ctrl Y','Redo text edit'],
     ['Edit','Alt ↑ / ↓','Browse executed cell history'],['Edit','↑ / ↓ at editor boundary','Move to adjacent cell'],
-    ['Application','Ctrl / Cmd S','Save notebook'],['Application','Ctrl / Cmd Shift S','Save as'],
+    ['Application','Ctrl / Cmd S','Save active file'],['Application','Ctrl / Cmd Shift S','Save notebook as'],
     ['Application','Ctrl / Cmd F / H','Find / find and replace'],['Application','Ctrl / Cmd G / Shift G','Next / previous match'],
-    ['Application','Ctrl / Cmd Shift C / P','Command palette'],['Application','Ctrl / Cmd Shift H','Shortcut help'],
+    ['Application','Ctrl / Cmd Shift C / P','Command palette'],['Application','Ctrl / Cmd Shift H','Keyboard shortcut reference'],
     ['Application','Ctrl / Cmd B','Toggle file browser (outside Markdown editor)'],['Application','Ctrl / Cmd Shift F / Alt 1','Focus file browser'],
-    ['Application','Alt W / Ctrl Shift Q','Close notebook tab'],['Application','Ctrl / Cmd Shift [ / ]','Previous / next notebook tab'],
-    ['Application','Ctrl / Cmd Shift T','Reopen closed notebook'],['Application','Ctrl / Cmd Shift D','Toggle simple interface (outside editor)'],
+    ['Application','Alt W / Ctrl Shift Q','Close document tab'],['Application','Ctrl / Cmd Shift [ / ]','Previous / next document tab'],
+    ['Application','Ctrl / Cmd Shift T','Reopen closed document'],['Application','Ctrl / Cmd Shift D','Toggle simple interface (outside editor)'],
     ['Application','Ctrl / Cmd P','Print notebook'],['Application','Alt N','New Java notebook (Java Lab)'],['Both','Alt Shift V','Vibecode selected Java cell']
-    ,['File browser','↑ / ↓','Focus previous / next file'],['File browser','Enter','Open notebook'],['File browser','F2 / Delete','Rename / delete notebook'],['File browser','Ctrl / Cmd D','Duplicate notebook file']
+    ,['File browser','↑ / ↓','Focus previous / next file'],['File browser','Enter','Open file or download unsupported type'],['File browser','F2','Rename file'],['File browser','Delete','Delete notebook'],['File browser','Ctrl / Cmd D','Duplicate notebook file'],
+    ['Text editor','Tab / Shift Tab','Indent / outdent'],['Text editor','Enter','Auto-indent'],['Text editor','Ctrl / Cmd F','Find in file'],
+    ['Text editor','Alt Shift F','Format JSON / XML'],['Text editor','Ctrl / Cmd Z / Shift Z; Ctrl Y','Undo / redo text edits']
   ];
   function nstate(n=active()){return n?M.ensure(n):null;}
   function indexes(n=active()){return n?M.selected(n):[];}
@@ -200,12 +202,12 @@ window.NotebookControls = (() => {
     palette:()=>showPalette(),find:()=>showSearch(false),'find-replace':()=>showSearch(true),
     'find-next':()=>findMatch(1),'find-previous':()=>findMatch(-1),'save-as':()=>saveAs(),
     'simple-mode':()=>document.body.classList.toggle('simple-interface'),
-    'next-tab':()=>switchTab(1),'previous-tab':()=>switchTab(-1),'reopen-tab':()=>{const last=closedTabs.pop();if(last)return openNotebook(last.name,last.folder);},
+    'next-tab':()=>switchTab(1),'previous-tab':()=>switchTab(-1),'reopen-tab':()=>{const last=closedTabs.pop();if(last)return openFile(last.name,last.folder,last.type);},
     'file-browser':()=>{const button=$('[data-panel="files"]');button.click();$('#file-search').focus();},
     print:()=>window.print()
   };
   const paletteCommands=[
-    ['new','New Java notebook'],['launcher','Open launcher'],['save','Save notebook'],['save-as','Save notebook as…'],['close','Close notebook tab'],
+    ['new','New Java notebook'],['new-file','New data/text file'],['new-csv','New CSV table'],['new-json','New JSON file'],['new-xml','New XML file'],['new-txt','New text file'],['new-image','Upload image'],['launcher','Open launcher'],['save','Save active file'],['rename','Rename active file'],['save-as','Save notebook as…'],['close','Close document tab'],
     ['run','Run selected cells'],['run-next','Run selected cells and advance'],['run-all','Run all cells'],['interrupt','Interrupt kernel'],['restart','Restart kernel'],
     ['insert-above','Insert cell above'],['insert-below','Insert cell below'],['heading-above','Insert heading above'],['heading-below','Insert heading below'],
     ['cut-cell','Cut selected cells'],['copy-cell','Copy selected cells'],['paste-cell','Paste cells below'],['paste-above','Paste cells above'],['duplicate','Duplicate selected cells'],
@@ -213,10 +215,10 @@ window.NotebookControls = (() => {
     ['move-up','Move cells up'],['move-down','Move cells down'],['code-cell','Change to Java code'],['markdown-cell','Change to Markdown'],['raw-cell','Change to raw'],['select-all','Select all cells'],
     ['toggle-outputs','Toggle selected outputs'],['scroll-outputs','Toggle output scrolling'],['clear-selected','Clear selected outputs'],['clear','Clear all outputs'],
     ['line-numbers','Toggle cell line numbers'],['all-line-numbers','Toggle all line numbers'],['side-by-side','Toggle cell side-by-side layout'],['collapse-headings','Collapse all headings'],['expand-headings','Expand all headings'],
-    ['find','Find notebook source'],['find-replace','Find and replace'],['sidebar','Toggle sidebar'],['simple-mode','Toggle simple interface'],['export-html','Export HTML'],['download','Download notebook'],['print','Print notebook'],['vibecode','Vibecode selected cell'],['help','Keyboard shortcuts']
+    ['find','Find notebook source'],['find-replace','Find and replace'],['sidebar','Toggle sidebar'],['simple-mode','Toggle simple interface'],['export-html','Export HTML'],['download','Download notebook'],['print','Print notebook'],['vibecode','Vibecode selected cell'],['help','Help & usage guide'],['help-shortcuts','Keyboard shortcuts']
   ];
   async function perform(name){try{await (commands[name]||actions[name])?.();}catch(e){notify(e.message,true);}}
-  function switchTab(direction){const list=state.notebooks;if(!list.length)return;const i=list.indexOf(state.active);state.active=list[(i+direction+list.length)%list.length];state.launcher=false;renderWorkspace();command();}
+  function switchTab(direction){const list=openDocuments();if(!list.length)return;const i=list.indexOf(state.active);state.active=list[(i+direction+list.length)%list.length];state.launcher=false;renderWorkspace();command();}
   async function saveAs(){const n=active();if(!n)return;const name=await modal('Save notebook as','Choose a filename for a copy of this notebook.','Save as',n.name);if(!name)return;const created=await api('/notebooks'+folderQuery(n.folder),'POST',{name});await api('/notebooks/'+encodeURIComponent(created.name)+folderQuery(n.folder),'PUT',notebookSnapshot(n.document));await refreshFiles();await openNotebook(created.name,n.folder);}
   function paletteItems(){const query=$('#palette-query').value.toLowerCase().split(/\s+/).filter(Boolean);return paletteCommands.filter(([,label])=>query.every(word=>label.toLowerCase().includes(word)));}
   function renderPalette(){const items=paletteItems();paletteIndex=Math.max(0,Math.min(paletteIndex,items.length-1));$('#palette-list').innerHTML=items.map(([name,label],i)=>`<button type="button" role="option" aria-selected="${i===paletteIndex}" class="palette-item ${i===paletteIndex?'active':''}" data-palette-command="${name}">${escapeHtml(label)}</button>`).join('')||'<div class="empty-files">No matching commands.</div>';$('.palette-item.active')?.scrollIntoView({block:'nearest'});}
@@ -253,17 +255,18 @@ window.NotebookControls = (() => {
     if(event.key==='Escape'&&$('.menu.open')){consume(event);$$('.menu').forEach(menu=>menu.classList.remove('open'));if(n)command(n);return;}
     const file=event.target.closest?.('#file-list [data-file]');
     if(file) {
-      if(file.dataset.fileType==='notebook'&&event.key==='F2'){consume(event);renameNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
+      if(event.key==='F2'){consume(event);renameFile(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
       if(file.dataset.fileType==='notebook'&&event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
       if(file.dataset.fileType==='notebook'&&accel&&key==='d'){consume(event);(async()=>{const folder=file.dataset.fileFolder || '';const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file)+folderQuery(folder));const copy=await api('/notebooks'+folderQuery(folder),'POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name)+folderQuery(folder),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
       if(['ArrowUp','ArrowDown'].includes(event.key)){consume(event);const files=$$('#file-list [data-file]'),i=files.indexOf(file),next=Math.max(0,Math.min(i+(event.key==='ArrowUp'?-1:1),files.length-1));files[next]?.focus();return;}
     }
+    if(event.key==='F2'&&activeDocument()){consume(event);perform('rename');return;}
     if(accel&&event.shiftKey&&(key==='c'||key==='p')){consume(event);showPalette();return;}
-    if(accel&&event.shiftKey&&key==='h'){consume(event);perform('help');return;}
+    if(accel&&event.shiftKey&&key==='h'){consume(event);perform('help-shortcuts');return;}
     if(accel&&key==='s'){consume(event);perform(event.shiftKey?'save-as':'save');return;}
     if(event.altKey&&!accel&&key==='n'){consume(event);perform('new');return;}
     if(n&&(editor||commandScope(event))&&event.altKey&&event.shiftKey&&!accel&&(event.code==='KeyV'||key==='v')&&n.document.cells[n.selected]?.cell_type==='code'&&!n.running){consume(event);perform('vibecode');return;}
-    if(n&&event.altKey&&key==='w'||n&&event.ctrlKey&&event.shiftKey&&key==='q'){consume(event);perform('close');return;}
+    if(activeDocument()&&(event.altKey&&key==='w'||event.ctrlKey&&event.shiftKey&&key==='q')){consume(event);perform('close');return;}
     if(accel&&event.shiftKey&&event.code==='BracketRight'){consume(event);switchTab(1);return;}
     if(accel&&event.shiftKey&&event.code==='BracketLeft'){consume(event);switchTab(-1);return;}
     if(accel&&event.shiftKey&&key==='t'){consume(event);perform('reopen-tab');return;}
@@ -321,15 +324,15 @@ window.NotebookControls = (() => {
     resetSequence();
     if(/^[1-6]$/.test(key)){consume(event);changeType('markdown',Number(key));return;}
     const action=event.shiftKey?{a:'heading-above',b:'heading-below',m:'merge-cells',v:'paste-above',z:'redo-cell',l:'all-line-numbers',o:'scroll-outputs',r:'side-by-side'}[key]
-      :{a:'insert-above',b:'insert-below',y:'code-cell',m:'markdown-cell',r:'raw-cell',t:'raw-cell',x:'cut-cell',c:'copy-cell',v:'paste-cell',z:'undo-cell',l:'line-numbers',o:'toggle-outputs',s:'save',h:'help'}[key];
-    if(action||event.key==='?'){consume(event);perform(action||'help');}
+       :{a:'insert-above',b:'insert-below',y:'code-cell',m:'markdown-cell',r:'raw-cell',t:'raw-cell',x:'cut-cell',c:'copy-cell',v:'paste-cell',z:'undo-cell',l:'line-numbers',o:'toggle-outputs',s:'save',h:'help-shortcuts'}[key];
+    if(action||event.key==='?'){consume(event);perform(action||'help-shortcuts');}
   },true);
   $('#cells').addEventListener('beforeinput',event=>{if(event.target.matches('.cell-editor textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];textState(n,c).draft={value:event.target.value,start:event.target.selectionStart,end:event.target.selectionEnd};}});
   document.addEventListener('pointerdown',resetSequence);
   $('#cells').addEventListener('input',event=>{if(event.target.matches('.cell-editor textarea')){const n=active(),c=n.document.cells[Number(event.target.closest('[data-cell]').dataset.cell)];observeText(n,c,event.target);syncLineNumbers(event.target);}});
   Object.assign(actions,commands);
   return {shortcuts,indexes,selected,command,edit,paint,decorate,insert,changeType,perform,resetSequence,
-    closed:n=>{closedTabs.push({name:n.name,folder:n.folder});if(closedTabs.length>20)closedTabs.shift();},
+    closed:n=>{closedTabs.push({name:n.name,folder:n.folder,type:n.type});if(closedTabs.length>20)closedTabs.shift();},
     restoreFocus:()=>{const n=active();if(n)nstate(n).mode==='edit'?edit(n):focusCommand(n);},
     clicked:(event,index)=>{const n=active();if(!n)return;const s=nstate(n);selected(n,index,event.shiftKey&&!event.target.matches('textarea'),false);if(event.target.matches('textarea')){s.mode='edit';paint(n);updateStatus();}else if(event.target.closest('input,button,select,a,.echarts-chart,.grid-table'))command(n,false);else command(n);},
     setEditing:()=>{const n=active();if(n){nstate(n).mode='edit';paint(n);}},

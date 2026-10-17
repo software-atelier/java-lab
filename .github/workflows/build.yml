@@ -28,6 +28,14 @@ jobs:
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean package
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test browser modules
+        run: node --test src/test/js/*.test.cjs
+
       - name: Upload executable JAR
         uses: actions/upload-artifact@v4
         with:
@@ -42,6 +50,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+
       - name: Download built JAR
         uses: actions/download-artifact@v4
         with:
@@ -52,9 +63,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          notes="docs/releases/$GITHUB_REF_NAME.md"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" java-lab.jar --clobber
+            if [ -f "$notes" ]; then
+              gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+            fi
           else
-            gh release create "$GITHUB_REF_NAME" java-lab.jar \
-              --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+            if [ -f "$notes" ]; then
+              gh release create "$GITHUB_REF_NAME" java-lab.jar \
+                --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
+            else
+              gh release create "$GITHUB_REF_NAME" java-lab.jar \
+                --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+            fi
           fi

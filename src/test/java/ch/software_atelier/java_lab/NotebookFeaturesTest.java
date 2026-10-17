@@ -72,12 +72,19 @@ class NotebookFeaturesTest {
         String name = store.create("secret");
         var doc = store.read(name);
         doc.withObject("metadata").withObject("java_lab").putArray("variables").addObject().put("name", "TOKEN").put("secret", true);
+        doc.withObject("metadata").withObject("java_lab").withArray("variables").addObject().put("name", "TOKEN_LONG").put("secret", true);
         store.save(name, doc);
-        store.updateValues(name, Map.of("TOKEN", "very-private-token"), List.of());
+        store.updateValues(name, Map.of("TOKEN", "very-private-token", "TOKEN_LONG", "long-secret-prefix-".repeat(80)), List.of());
         try (KernelService kernels = new KernelService(store)) {
             String id = kernels.create(name);
             assertThat(kernels.execute(id, "requireLabVar(\"TOKEN\")").outputs().toString()).contains("[REDACTED]").doesNotContain("very-private-token");
             assertThat(kernels.execute(id, "System.out.println(requireLabVar(\"TOKEN\"));").outputs().toString()).doesNotContain("very-private-token");
+            assertThat(kernels.execute(id, "var credentials = Map.of(\"nested\", List.of(requireLabVar(\"TOKEN\")));").success()).isTrue();
+            var nested = kernels.inspectSession(id, "inspect_variable", mapper.readTree("{\"variable\":\"credentials\",\"path\":[{\"entry\":0},{\"index\":0}]}"));
+            assertThat(nested.toString()).contains("[REDACTED]").doesNotContain("very-private-token");
+            assertThat(kernels.execute(id, "String longSecret = requireLabVar(\"TOKEN_LONG\");").success()).isTrue();
+            assertThat(kernels.inspectSession(id, "inspect_variable", mapper.readTree("{\"variable\":\"longSecret\"}")).toString())
+                .contains("[REDACTED]").doesNotContain("long-secret-prefix-");
         }
     }
     @Test void resolvesTransitiveJarOnlyForNotebook() throws Exception {

@@ -132,3 +132,20 @@ test('a new run or AI service failure keeps the original code and errors',async(
   assert.equal(failed.dirty,0);
   assert.match(failed.element('#vibe-error').textContent,/AI service unavailable/);
 });
+
+test('Vibecode binds inspection to the active kernel and discards results after a kernel restart',async()=>{
+  let complete;
+  const response=new Promise(resolve=>{complete=resolve;});
+  const cell=failedCell(),h=harness([cell],{generate:()=>response});
+  h.notebook.kernel='original-kernel';
+  const pending=h.ai.fixError();
+  await new Promise(resolve=>setImmediate(resolve));
+  const request=h.calls.find(call=>call.endpoint==='/ai/generate').body;
+  assert.equal(request.kernelId,'original-kernel');
+  h.notebook.kernel='replacement-kernel';
+  complete({code:'// based on obsolete session values'});
+  await pending;
+  assert.equal(cell.source.join(''),'String result = query("users");');
+  assert.equal(h.dirty,0);
+  assert.match(h.element('#vibe-error').textContent,/changed while generating/);
+});

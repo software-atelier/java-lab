@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const context = {window:{}};
+const context = {window:{},atob:value=>Buffer.from(value,'base64').toString('binary')};
 vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../../main/resources/static/presentation.js'),'utf8'), context);
 const {highlightJava, markdown, exportHtml} = context.window.LabPresentation;
 
@@ -20,13 +20,22 @@ test('Java lexer distinguishes text blocks, comments, strings, types, and keywor
 
 test('Markdown preview supports structured prose, code, and tables without permitting HTML injection', () => {
   const html = markdown('# Heading\n\n**bold** and `code`\n\n- item one\n- item two\n\n| Key | Value |\n| --- | --- |\n| A | 42 |\n\n```java\nint total = 42;\n```\n\n<img src=x onerror="alert(1)">\n[bad](javascript:alert)');
-  assert.match(html, /<h1>Heading<\/h1>/);
+  assert.match(html, /<h1[^>]*>Heading<\/h1>/);
   assert.match(html, /<strong>bold<\/strong>/);
   assert.match(html, /<ul><li>item one<\/li><li>item two<\/li><\/ul>/);
   assert.match(html, /<th>Key<\/th>/);
   assert.match(html, /syntax-keyword/);
   assert.doesNotMatch(html, /<img|href="javascript:/);
   assert.match(html, /&lt;img/);
+});
+
+test('Markdown links are safe, section anchors are globally stable and image paths are discoverable',()=>{
+  const first=markdown('## Shared heading\n\n[Web](https://example.com) [Local](<docs/a b.txt>) [Section](#shared-heading)\n\n![Photo](<images/a b.png>)');
+  const second=markdown('## Shared heading', {headingCounts:new Map([['shared-heading',1]])});
+  assert.match(first,/id="md-shared-heading"/);assert.match(second,/id="md-shared-heading-1"/);
+  assert.match(first,/href="https:\/\/example.com"/);assert.match(first,/data-workspace-link="docs\/a b.txt"/);assert.match(first,/href="#md-shared-heading"/);
+  assert.deepEqual([...context.window.LabPresentation.markdownImagePaths('![Photo](<images/a b.png>)')],['images/a b.png']);
+  for(const unsafe of ['![bad](https://example.com/x.png)','![bad](../x.png)','![bad](%2e%2e/x.png)','![bad](.hidden/x.png)'])assert.deepEqual([...context.window.LabPresentation.markdownImagePaths(unsafe)],[]);
 });
 
 test('HTML export embeds styling, highlighted Java, Markdown, and escaped saved outputs with no scripts or asset dependencies', () => {
@@ -42,7 +51,7 @@ test('HTML export embeds styling, highlighted Java, Markdown, and escaped saved 
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /<style>/);
   assert.match(html, /Experiment &lt;unsafe&gt;/);
-  assert.match(html, /<h2>An experiment<\/h2>/);
+  assert.match(html, /<h2[^>]*>An experiment<\/h2>/);
   assert.match(html, /syntax-keyword/);
   assert.match(html, /EXECUTION 3/);
   assert.match(html, /<pre>42<\/pre>/);

@@ -22,6 +22,13 @@ public final class Display {
 
     static synchronized void emit(String mime, String title, int width, int height, byte[] content) {
         validateSize(width, height);
+        collect(mime,title,width,height,content);
+    }
+    static synchronized void emitImage(String mime,String title,int width,int height,byte[] content){
+        if(width<1||height<1||width>10000||height>10000||(long)width*height>40000000)throw new IllegalArgumentException("Image dimensions exceed their limits");
+        collect(mime,title,width,height,content);
+    }
+    private static void collect(String mime,String title,int width,int height,byte[] content){
         if (pending.size() >= 16) throw new IllegalStateException("At most 16 displays can be shown by one Java snippet");
         if (pendingBytes + content.length > 16_000_000) throw new IllegalStateException("Display output exceeds the 16 MB snippet limit");
         try {

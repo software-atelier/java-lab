@@ -29,6 +29,23 @@ public class DataFormatsContext implements AiContextProvider {
             For UTF-8 BOM files, wrap BOMInputStream.builder().setPath(Path.of("data.csv")).get()
             in new java.io.InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8).
 
+            Csv (ch.software_atelier.java_lab.data.Csv) is also pre-imported for workspace CSV files.
+            Prefer it for loading/saving moderate tables: var salesCsv = Csv.load("Data/sales.csv");
+            var salesRows = salesCsv.records(); // immutable List<Map<String,String>>, first row is the header
+            salesCsv.rows() includes every record, including the first; salesCsv.headers() returns the first
+            record, and salesCsv.data() returns the remaining rows. Values remain strings, including leading
+            zeros and empty cells. records() requires unique nonblank headers and equal-width rows.
+            Csv.load(String) / load(Path) auto-detect comma, semicolon, tab or pipe and preserve UTF-8 BOM,
+            line endings and whether the file ended with a newline. load(String, char) selects a delimiter.
+            To change data, copy the immutable rows into mutable lists and use table.withRows(newRows).
+            Csv.save("Data/copy.csv", salesCsv) / save(Path, table) writes atomically where supported.
+            Paths are relative to the workspace root (configured data directory, LAB_DATA_DIR; default workingDir/data), NOT to the notebook's subfolder. Use exact paths from
+            the workspace-csv catalog. Its columns are bounded first-record metadata, not verified data rows;
+            catalogTruncated means more files/columns may exist. Unsaved table-editor changes are not included.
+            Helper/editor limits: 10 MB, 10,000 records including header, 100 columns, 100,000 cells,
+            100,000 characters per cell. Use streaming Commons CSV directly for larger files.
+            Loading/saving useful data must remain in the generated cell, not be replaced by a printed preview.
+
             Runnable header CSV example:
             var format = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get();
             try (var parser = CSVParser.parse("name,sales\\nAda,42\\nGrace,19\\n", format)) {

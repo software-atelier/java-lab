@@ -19,11 +19,23 @@ public class NotebookStore {
     private final NotebookValues values;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public NotebookStore(ObjectMapper mapper) { this(mapper, Path.of(System.getProperty("user.dir"))); }
+    public NotebookStore(ObjectMapper mapper, @org.springframework.beans.factory.annotation.Value("${lab.data-dir:data}") String configuredDirectory) {
+        this(mapper, dataDirectory(Path.of(System.getProperty("user.dir")), configuredDirectory));
+    }
+
+    public NotebookStore(ObjectMapper mapper) { this(mapper, "data"); }
+
+    static Path dataDirectory(Path workingDirectory, String configuredDirectory) {
+        Path path = Path.of(configuredDirectory == null || configuredDirectory.isBlank() ? "data" : configuredDirectory.strip());
+        return (path.isAbsolute() ? path : workingDirectory.resolve(path)).toAbsolutePath().normalize();
+    }
 
     NotebookStore(ObjectMapper mapper, Path root) {
         this.mapper = mapper;
-        this.root = root.toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(root);
+            this.root = root.toRealPath();
+        } catch (IOException e) { throw new IllegalStateException("Cannot create or access the configured data directory", e); }
         this.values = new NotebookValues(mapper, this.root);
     }
 
@@ -39,11 +51,11 @@ public class NotebookStore {
         Path directory = resolveFolder(visibleFolderPath(folder), true);
         try (var files = Files.list(directory)) {
             return files.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-                .filter(p -> visibleFilename(p.getFileName().toString()) && p.getFileName().toString().endsWith(".jnb"))
+                .filter(p -> !p.getFileName().toString().startsWith("."))
                 .map(p -> {
                     try {
                         String name = p.getFileName().toString();
-                        return new Entry(name, Files.size(p), Files.getLastModifiedTime(p).toMillis(), "notebook");
+                        return new Entry(name, Files.size(p), Files.getLastModifiedTime(p).toMillis(), fileType(name));
                     }
                     catch (IOException e) { throw new java.io.UncheckedIOException(e); }
                 }).sorted(Comparator.comparing(Entry::name, String.CASE_INSENSITIVE_ORDER)).toList();
@@ -107,8 +119,12 @@ public class NotebookStore {
     }
 
     private static boolean validSegment(String segment) {
+        return validName(segment, 100);
+    }
+
+    private static boolean validName(String segment, int maximumLength) {
         return segment != null && !segment.isBlank() && !segment.equals(".") && !segment.equals("..")
-            && segment.length() <= 100 && !segment.contains("/") && !segment.contains("\\") && !segment.contains(":") && !segment.contains("\0")
+            && segment.length() <= maximumLength && !segment.contains("/") && !segment.contains("\\") && !segment.contains(":") && !segment.contains("\0")
             && segment.chars().noneMatch(c -> c < 32 || c == 127);
     }
 
@@ -133,14 +149,17 @@ public class NotebookStore {
     }
 
     private List<List<String>> csvPreview(byte[] bytes) {
-        String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         List<List<String>> rows = new java.util.ArrayList<>();
-        try (var parser = org.apache.commons.csv.CSVParser.parse(content, org.apache.commons.csv.CSVFormat.DEFAULT)) {
-            for (var record : parser) {
-                List<String> columns = new java.util.ArrayList<>();
-                for (int col = 0; col < Math.min(record.size(), 30); col++) columns.add(record.get(col));
-                rows.add(columns);
-                if (rows.size() == 21) break;
+        try {
+            String content = java.nio.charset.StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+            if (content.startsWith("\ufeff")) content = content.substring(1);
+            try (var parser = org.apache.commons.csv.CSVParser.parse(content, ch.software_atelier.java_lab.data.Csv.format(ch.software_atelier.java_lab.data.Csv.detectDelimiter(content), "\n"))) {
+                for (var record : parser) {
+                    List<String> columns = new java.util.ArrayList<>();
+                    for (int col = 0; col < Math.min(record.size(), 30); col++) columns.add(record.get(col));
+                    rows.add(columns);
+                    if (rows.size() == 21) break;
+                }
             }
         } catch (Exception e) { throw badRequest("Invalid CSV file"); }
         return rows;
@@ -215,10 +234,60 @@ public class NotebookStore {
         Path target = resolve(newName);
         if (!Files.exists(source)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notebook not found");
         if (source.equals(target)) return newName;
-        if (Files.exists(target)) throw new ResponseStatusException(HttpStatus.CONFLICT, "A notebook with that name already exists");
-        Files.move(source, target);
-        values.rename(source, target);
+        moveRenamedFile(source,target);
+        try {values.rename(source, target);}
+        catch(IOException|RuntimeException e){try{moveRenamedFile(target,source);}catch(IOException|RuntimeException rollback){e.addSuppressed(rollback);}throw e;}
         return newName;
+    }
+
+    public record FileEntry(String name, String path, String type, String format) {}
+    private FileEntry entry(Path path) {
+        String name=path.getFileName().toString(),type=fileType(name);
+        return new FileEntry(name,relative(path),type,type.equals("text")?TextFileStore.format(name):null);
+    }
+    public FileEntry fileInfo(String path){return entry(existingFile(path));}
+    public synchronized FileEntry createFile(String folder,String name,String extension) throws IOException {
+        var supported=java.util.Set.of("csv","json","xml","txt","md","yaml","yml","java","sql","properties","log","css","js","html","htm");
+        if(extension==null||!supported.contains(extension))throw badRequest("Choose a supported new file type");
+        if(name==null||name.isBlank())name="Untitled."+extension;
+        if(extension.equals("yaml")&&name.toLowerCase(java.util.Locale.ROOT).endsWith(".yml"))extension="yml";
+        if(extension.equals("html")&&name.toLowerCase(java.util.Locale.ROOT).endsWith(".htm"))extension="htm";
+        if(!name.toLowerCase(java.util.Locale.ROOT).endsWith("."+extension)){
+            if(name.contains("."))throw badRequest("Use a filename ending in ."+extension);
+            name+="."+extension;
+        }
+        if(!validName(name,255)||name.startsWith("."))throw badRequest("Invalid file name");
+        Path directory=resolveFolder(visibleFolderPath(folder),true);
+        String base=name.substring(0,name.lastIndexOf('.')),suffix=name.substring(name.lastIndexOf('.'));
+        Path target=directory.resolve(name);int counter=1;
+        while(Files.exists(target,LinkOption.NOFOLLOW_LINKS))target=directory.resolve(base+"-"+counter++ +suffix);
+        String initial=switch(extension){case "csv"->"column1,column2\n";case "json"->"{\n}\n";case "xml"->"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root/>\n";default->"";};
+        Files.writeString(target,initial,StandardOpenOption.CREATE_NEW);return entry(target);
+    }
+    public synchronized FileEntry renameFile(String path,String newName) throws IOException {
+        Path source=existingFile(path);
+        if(!validName(newName,255)||newName.startsWith("."))throw badRequest("Use a visible filename without path separators");
+        if(isNotebookName(source.getFileName().toString())){
+            String parent=relative(source.getParent());String renamed=rename(path,parent.isEmpty()?newName:parent+"/"+newName);return entry(resolve(renamed));
+        }
+        Path target=resolveVisibleFile(relative(source.getParent()).isEmpty()?newName:relative(source.getParent())+"/"+newName);
+        if(source.equals(target))return entry(target);
+        moveRenamedFile(source,target);return entry(target);
+    }
+
+    private void moveRenamedFile(Path source,Path target) throws IOException {
+        if(!Files.exists(target,LinkOption.NOFOLLOW_LINKS)){Files.move(source,target);return;}
+        boolean caseAlias=source.getFileName().toString().equalsIgnoreCase(target.getFileName().toString())&&Files.isSameFile(source,target);
+        if(caseAlias)try(var entries=Files.list(source.getParent())){caseAlias=entries.noneMatch(file->file.getFileName().toString().equals(target.getFileName().toString()));}
+        if(!caseAlias)throw new ResponseStatusException(HttpStatus.CONFLICT,"A file with that name already exists");
+        // Force a case-only rename on case-insensitive filesystems without replacing another entry.
+        Path temporary=Files.createTempFile(source.getParent(),".java-lab-rename-",".tmp");
+        boolean originalInTemporary=false;
+        try{
+            Files.move(source,temporary,StandardCopyOption.REPLACE_EXISTING);originalInTemporary=true;
+            try{Files.move(temporary,target);originalInTemporary=false;}
+            catch(IOException e){try{Files.move(temporary,source);originalInTemporary=false;}catch(IOException rollback){e.addSuppressed(rollback);}throw e;}
+        }finally{if(!originalInTemporary)Files.deleteIfExists(temporary);}
     }
 
     /** Move a listed notebook or data file without changing its filename. */
@@ -246,14 +315,36 @@ public class NotebookStore {
 
     private String relative(Path path) { return root.relativize(path).toString().replace('\\', '/'); }
 
-    private Path resolveVisibleFile(String path) {
-        if (path == null || path.isBlank()) throw badRequest("File path is required");
+    Path resolveVisibleFile(String path) {
+        if (path == null || path.isBlank() || path.startsWith("/")) throw badRequest("A relative file path is required");
         int slash = path.lastIndexOf('/');
         String filename = path.substring(slash + 1);
-        if (!visibleFilename(filename)) throw badRequest("Invalid file path");
+        if (!validName(filename, 255) || filename.startsWith(".")) throw badRequest("Invalid file path");
         Path result = resolveFolder(visibleFolderPath(slash < 0 ? "" : path.substring(0, slash)), false).resolve(filename);
         if (Files.isSymbolicLink(result)) throw badRequest("Symbolic links are not allowed in file paths");
         return result;
+    }
+
+    Path existingFile(String path) {
+        Path file = resolveVisibleFile(path);
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found");
+        return file;
+    }
+
+    static String fileType(String name) {
+        if (isNotebookName(name)) return "notebook";
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".csv")) return "csv";
+        if (lower.matches(".*\\.(png|jpe?g|gif|bmp|webp|svg)$")) return "image";
+        String extension = lower.substring(lower.lastIndexOf('.') + 1);
+        return java.util.Set.of("json","xml","txt","md","yaml","yml","java","sql","properties","log","css","js","html","htm").contains(extension) ? "text" : "file";
+    }
+
+    Path resolveCsv(String path) {
+        if (path == null || !path.toLowerCase(java.util.Locale.ROOT).endsWith(".csv")) throw badRequest("Use a CSV filename ending in .csv");
+        Path resolved = resolveVisibleFile(path);
+        if (!Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "CSV file not found");
+        return resolved;
     }
 
     private static boolean visibleFilename(String name) { return validSegment(name) && !name.startsWith("."); }
@@ -277,7 +368,7 @@ public class NotebookStore {
         int slash = name.lastIndexOf('/');
         String folder = slash < 0 ? "" : name.substring(0, slash);
         String filename = name.substring(slash + 1);
-        if (!validSegment(filename)) throw badRequest("Invalid notebook filename");
+        if (!validName(filename, 255)) throw badRequest("Invalid notebook filename");
         Path path = resolveFolder(folder, false).resolve(filename);
         if (Files.isSymbolicLink(path)) throw badRequest("Invalid notebook path");
         return path;

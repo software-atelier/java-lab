@@ -30,7 +30,7 @@ function makeElement(tag){
   return element;
 }
 
-function load() {
+function load(t) {
   const documentListeners={};
   const doc={
     addEventListener(type,fn){(documentListeners[type] ||= []).push(fn);},
@@ -52,7 +52,7 @@ function load() {
     innerWidth:1000,innerHeight:600,
     getComputedStyle:()=>({fontFamily:'',fontSize:'',fontWeight:'',lineHeight:'',letterSpacing:'',padding:'',tabSize:''}),
     escapeHtml:value=>String(value??''),
-    setTimeout,clearTimeout,
+    setTimeout:t.clock.setTimeout,clearTimeout:t.clock.clearTimeout,
   };
   vm.createContext(sandbox);
   vm.runInNewContext(code,sandbox);
@@ -62,13 +62,21 @@ function load() {
 }
 
 const flush=()=>new Promise(setImmediate);
+function enableTimers(t){
+  let now=0,id=0;const pending=new Map();
+  t.clock={
+    setTimeout(fn,delay){const key=++id;pending.set(key,{fn,at:now+delay});return key;},
+    clearTimeout(key){pending.delete(key);},
+    tick(delay){const end=now+delay;while(true){const next=[...pending].sort((a,b)=>a[1].at-b[1].at)[0];if(!next||next[1].at>end)break;now=next[1].at;pending.delete(next[0]);next[1].fn();}now=end;}
+  };
+}
 
 async function open(h,t,suggestions=[{text:'out'}]) {
   h.doc.activeElement=h.editor;
   h.editor.value='System.';h.editor.selectionStart=7;h.editor.selectionEnd=7;
   h.fire();
   h.responses.push({anchor:7,suggestions});
-  t.mock.timers.tick(300);
+  t.clock.tick(300);
   await flush();
   assert.equal(h.calls.length,1);
   assert.equal(JSON.stringify(h.calls[0].body),JSON.stringify({code:'System.',cursor:7}));
@@ -77,8 +85,8 @@ async function open(h,t,suggestions=[{text:'out'}]) {
 }
 
 test('a single letter after a dot re-requests completion instead of dropping it',async t=>{
-  t.mock.timers.enable({apis:['setTimeout']});
-  const h=load();
+  enableTimers(t);
+  const h=load(t);
   const menu=await open(h,t);
   assert.ok(menu);
 
@@ -86,7 +94,7 @@ test('a single letter after a dot re-requests completion instead of dropping it'
   h.fire();
   assert.equal(h.calls.length,1); // no immediate network call
   h.responses.push({anchor:8,suggestions:[{text:'out'}]});
-  t.mock.timers.tick(80);
+  t.clock.tick(80);
   await flush();
   assert.equal(h.calls.length,2);
   assert.equal(JSON.stringify(h.calls[1].body),JSON.stringify({code:'System.o',cursor:8}));
@@ -95,15 +103,15 @@ test('a single letter after a dot re-requests completion instead of dropping it'
 });
 
 test('the popup stays open and updates while typing more letters',async t=>{
-  t.mock.timers.enable({apis:['setTimeout']});
-  const h=load();
+  enableTimers(t);
+  const h=load(t);
   const menu=await open(h,t);
 
   h.editor.value='System.ou';h.editor.selectionStart=9;h.editor.selectionEnd=9;
   h.fire();
   assert.equal(menu.removed,0); // kept visible during the refresh wait
   h.responses.push({anchor:8,suggestions:[{text:'out'},{text:'output'}]});
-  t.mock.timers.tick(80);
+  t.clock.tick(80);
   await flush();
   assert.equal(h.calls.length,2);
   assert.equal(JSON.stringify(h.calls[1].body),JSON.stringify({code:'System.ou',cursor:9}));
@@ -112,14 +120,14 @@ test('the popup stays open and updates while typing more letters',async t=>{
 });
 
 test('a refresh without suggestions closes the popup',async t=>{
-  t.mock.timers.enable({apis:['setTimeout']});
-  const h=load();
+  enableTimers(t);
+  const h=load(t);
   const menu=await open(h,t);
 
   h.editor.value='System.z';h.editor.selectionStart=8;h.editor.selectionEnd=8;
   h.fire();
   h.responses.push({anchor:8,suggestions:[]});
-  t.mock.timers.tick(80);
+  t.clock.tick(80);
   await flush();
   assert.equal(h.calls.length,2);
   assert.equal(menu.removed,1);
@@ -127,27 +135,27 @@ test('a refresh without suggestions closes the popup',async t=>{
 });
 
 test('typing a non-identifier character dismisses immediately without a request',async t=>{
-  t.mock.timers.enable({apis:['setTimeout']});
-  const h=load();
+  enableTimers(t);
+  const h=load(t);
   const menu=await open(h,t);
 
   h.editor.value='System.o ';h.editor.selectionStart=9;h.editor.selectionEnd=9;
   h.fire();
   assert.equal(menu.removed,1);
   assert.equal(h.editor.attributes['aria-expanded'],'false');
-  t.mock.timers.tick(500);
+  t.clock.tick(500);
   await flush();
   assert.equal(h.calls.length,1); // no follow-up request for the space
 });
 
 test('a single identifier letter from scratch requests completion',async t=>{
-  t.mock.timers.enable({apis:['setTimeout']});
-  const h=load();
+  enableTimers(t);
+  const h=load(t);
   h.doc.activeElement=h.editor;
   h.editor.value='o';h.editor.selectionStart=1;h.editor.selectionEnd=1;
   h.fire();
   h.responses.push({anchor:0,suggestions:[]});
-  t.mock.timers.tick(300);
+  t.clock.tick(300);
   await flush();
   assert.equal(h.calls.length,1);
   assert.equal(JSON.stringify(h.calls[0].body),JSON.stringify({code:'o',cursor:1}));

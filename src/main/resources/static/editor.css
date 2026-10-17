@@ -82,6 +82,16 @@
 .vibe-context { color: #8e98a6; font-size: 11px; }
 .vibe-context summary { cursor: pointer; margin-bottom: 7px; }
 .vibe-error { margin-top: 13px; padding: 10px 12px; border-radius: 5px; background: #fff3f1; color: #af6056; font-size: 11px; line-height: 1.7; }
-.vibe-progress { color: #9560ad; font-size: 11px; margin-top: 14px; animation: pulse 2s infinite; }
+.vibe-progress { position: relative; width: fit-content; color: #9560ad; font-size: 11px; margin-top: 14px; }
+.vibe-progress-trigger { border: 0; padding: 2px 0; background: transparent; color: inherit; font: inherit; cursor: help; text-decoration: underline dotted; text-underline-offset: 4px; animation: pulse 2s infinite; }
+.vibe-progress-popup { position: absolute; bottom: calc(100% - 1px); left: 0; z-index: 20; box-sizing: border-box; width: min(480px, calc(100vw - 90px)); max-height: min(65vh, 460px); overflow: auto; padding: 14px; border: 1px solid #d9c9df; border-radius: 7px; background: #fff; color: #596274; box-shadow: 0 8px 28px #24203824; visibility: hidden; opacity: 0; pointer-events: none; }
+.vibe-progress:hover .vibe-progress-popup, .vibe-progress:focus-within .vibe-progress-popup { visibility: visible; opacity: 1; pointer-events: auto; }
+.vibe-progress-popup strong { display: block; color: #82548f; margin-bottom: 8px; }
+#vibe-progress-activity { line-height: 1.5; overflow-wrap: anywhere; }
+#vibe-progress-log, #vibe-progress-diagnostics, #vibe-diagnostics-text { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0; font: 10px/1.6 var(--mono); }
+#vibe-progress-diagnostics { border-top: 1px solid var(--border); padding-top: 8px; }
+.vibe-diagnostics { margin-top: 12px; color: #637084; font-size: 11px; }
+.vibe-diagnostics summary { cursor: pointer; }
+.vibe-progress-popup small { color: #8e98a6; font-size: 10px; }
 .vibe-note { color: #a3acb7; font-size: 10px; margin-top: 17px; }
 @media(max-width:900px) { .notebook-toolbar { gap: 5px; } .vibe-button { font-size: 10px; padding: 4px; } }

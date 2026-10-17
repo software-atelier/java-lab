@@ -1,4 +1,6 @@
 target/
+/data/
+/.java-lab-values/
 .idea/
 *.iml
 .DS_Store

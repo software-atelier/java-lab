@@ -18,7 +18,7 @@ final class NotebookValues {
     private final Path directory;
     NotebookValues(ObjectMapper mapper, Path notebookRoot) {
         this.mapper = mapper;
-        this.directory = notebookRoot.getParent().resolve(".java-lab-values");
+        this.directory = (notebookRoot.getParent() == null ? notebookRoot : notebookRoot.getParent()).resolve(".java-lab-values");
     }
     private Path file(Path notebook) {
         try {

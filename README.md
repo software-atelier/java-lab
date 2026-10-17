@@ -32,11 +32,13 @@ java -jar target/java-lab.jar
 
 On a system with a graphical desktop, Java Lab asks the OS to open the default browser once the server is ready. The URL is also written to the log. On a headless server, open **http://127.0.0.1:10081** manually (or use the configured port and context path). The automatic URL follows the actual listening port, including a dynamically assigned port.
 
-**Notebooks are stored in the directory you launch the application from**, rather than next to the JAR. To use a different workspace, launch the JAR from that directory with its absolute path:
+**The default data directory is `{workingDir}/data`**, where `workingDir` is the directory you launch the application from, not the JAR's directory. It is created automatically. Notebooks, uploads and edited files live there. To choose another location:
 
 ```sh
-java -jar /absolute/path/to/java-lab.jar
+LAB_DATA_DIR="$HOME/java-lab-files" java -jar /absolute/path/to/java-lab.jar
 ```
+
+Relative `LAB_DATA_DIR` values start at the launch directory; absolute paths work too. The equivalent Spring option is `--lab.data-dir=/path/to/files`. The File Browser, CSV/AI file catalog, relative Java NIO `Path`/`Files` and CSV helper operations share this root, including for notebooks in subfolders. For legacy `java.io` APIs, pass `Path.of(...).toAbsolutePath().toFile()`; set an explicit working directory for native child processes. **Existing files are not moved automatically:** use `LAB_DATA_DIR=.` to continue using the previous launch-directory layout. Local notebook overrides are tied to the absolute notebook path; after manually relocating notebooks, supply their local values again if needed.
 
 Change the port if needed:
 
@@ -45,6 +47,36 @@ java -jar target/java-lab.jar --server.port=8090
 ```
 
 For development: `mvn spring-boot:run`. Tests: `mvn test`.
+
+### Environment variables
+
+Set variables in the process launching Java Lab, then restart it. Command-line Spring options take precedence over environment settings. The full reference is also available under **Help → Configuration & environment**; no configured secret values are displayed there.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LAB_DATA_DIR` | `data` under the launch directory | Data root; created automatically. Relative values resolve against the launch directory. |
+| `SERVER_PORT` | `10081` | HTTP listening port; equivalent to `--server.port`. |
+| `SERVER_ADDRESS` | `127.0.0.1` | Listening address; default is local-only. |
+| `SERVER_SERVLET_CONTEXT_PATH` | Empty | Optional URL prefix, e.g. `/lab`. |
+| `AI_API_KEY` | Empty | Provider token; required for OpenRouter/authenticated providers. |
+| `AI_MODEL` | Empty | Provider model ID; required to use Vibecode. |
+| `AI_API_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible base URL or complete `/chat/completions` endpoint. |
+| `AI_TIMEOUT` | `300s` | Overall model/tool/validation/correction timeout; durations such as `10m` are accepted. |
+| `AI_MAX_TOKENS` | `128000` | Requested output ceiling per model response, subject to provider/model limits. |
+| `AI_TOOLS_ENABLED` | `true` | Enable live Java session and library inspection. |
+| `AI_MAX_TOOL_ROUNDS` | `16` | Maximum inspection rounds; range 1–64. |
+| `AI_MAX_TOOL_CALLS` | `64` | Maximum attempted inspection calls; range 1–256. |
+| `JAVA_HOME` | Launcher dependent | Used by Maven/Java launch scripts; ensure `java` on `PATH` is the intended full JDK 17+. |
+| `PATH` | Operating system | Resolves Java, Maven and Linux's `xdg-open` browser launcher. |
+| `JAVA_TOOL_OPTIONS` | Empty | Standard JVM/tool options, inherited by child Java processes. |
+| `JDK_JAVA_OPTIONS` | Empty | Standard Java launcher options, inherited by child launchers. |
+| `MAVEN_HOME` | Unset | Maven global settings location `conf/settings.xml`, after the `maven.home` Java property. |
+| `M2_HOME` | Unset | Older Maven-home fallback, after `MAVEN_HOME`. |
+| `MAVEN_OPTS` | Empty | Maven launcher JVM options for builds / `spring-boot:run`; not read directly by the executable JAR's embedded resolver. |
+| `DISPLAY` | Desktop session | Linux X11 detection for automatically opening the browser. |
+| `WAYLAND_DISPLAY` | Desktop session | Linux Wayland detection; headless servers use the URL in the log. |
+
+Notebook environment bindings may refer to any additional variable names you choose, such as `JDBC_URL`, `JDBC_USER` or `API_TOKEN`; these have no global Java Lab default. Maven settings likewise support arbitrary `${env.NAME}` placeholders and environment activation conditions. Spring Boot's standard external configuration / relaxed environment bindings remain available beyond the common server controls listed above. JVM, Maven and desktop variables are runtime/launcher conventions rather than notebook settings.
 
 ## Workspace
 
@@ -64,16 +96,21 @@ For development: `mvn spring-boot:run`. Tests: `mvn test`.
 - **Interactive tables:** bundled Grid.js 6.2.0 provides searching, sorting, and pagination through a fluent Java wrapper, with persistence and offline HTML export.
 - **Execution controls:** run selected cell, run and advance, run all (stops on error), interrupt, restart kernel, and **Restart & run all** to rebuild Java state after a refresh or timeout.
 - **Editing:** insert, duplicate, reorder, delete, change cell type, and clear outputs. Double-click rendered Markdown to edit it.
-- **Files:** create, filter, open, rename, delete, and download `.jnb` notebooks in nested workspace folders. Click a notebook title to rename it inline. Drag notebooks onto another folder (or `..` for the parent folder) to move them. Create and delete empty folders, and upload data files; CSV uploads show a preview.
+- **Files:** all visible regular files appear in the File Browser with file-type icons. Notebooks and CSVs use their specialized tabs; JSON, XML, TXT and common source/text formats open in a highlighted text editor. Images open preview tabs with copyable embedding examples; other types download. Rename any file with F2, its File Browser/tab context menu, a tab-name double-click, or its editor title. Drag files onto another folder (or `..`) to move them; open editable files are saved first. Uploads open the matching editor/preview.
+- **Create files:** the launcher's **START SOMETHING NEW** includes notebooks, CSV, JSON, XML, TXT, YAML and SQL files, plus image upload and the introduction notebook. Choose a filename in the current browser folder; names receive numeric suffixes on collision. JSON/XML/CSV receive valid starter contents; other text files start empty.
 - **Beautiful HTML export:** **Export HTML** in the toolbar or **File → Export as HTML** downloads a standalone document with a styled cover, Markdown, syntax-highlighted Java, line numbers, and saved outputs. All styling is embedded; the exported file opens offline without the server. Responsive and print-friendly layouts are included.
 - **Autosave:** saves 1.2 seconds after an edit, with explicit save available. Changes, notes, and outputs persist to disk using atomic replacement where supported.
 - **Getting started:** the introduction launcher card creates and runs a sample notebook covering logging, Java state, formatted output, an interactive form, JSON/CSV, JFreeChart, Apache ECharts, and Grid.js. Click **A quick introduction** to create a fresh copy of the latest version.
+
+### In-app help and usage guide
+
+The **Help** menu provides a searchable offline guide with direct entries for **Getting started**, **Configuration & environment**, **Files & tabs**, **Text, JSON & XML files**, **Images & embedding**, **Cells & editing**, **Java & sessions**, **CSV files & helper**, **Variables & libraries**, **Charts & tables**, **Forms & formatted data**, **Vibecode & AI context**, **AI setup & diagnostics**, **Export & sharing**, and **Keyboard shortcuts & about**. Each topic includes practical steps, examples, relevant limits and recovery guidance. The guide also has a topic sidebar, full-text topic search and cross-links; it works without network access. The activity-bar Help button opens Getting started, while **H / ?** in notebook command mode or **Ctrl / Cmd + Shift + H** opens the full shortcut reference directly. Shortcut tables are generated from the current application bindings. **Escape**, the close button or **Done** closes help and returns focus to its opener.
 
 ### Jupyter-style keyboard controls
 
 **Escape** enters command mode and **Enter** enters edit mode. The status bar shows the current mode. Command-mode letters act on cells; typing inside editors and form fields is preserved. The mappings follow JupyterLab 4.6 defaults with common classic Notebook aliases.
 
-The complete implemented shortcut reference and upstream sources are in **[KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md)**. Open the same list from **Help**, with **H** in command mode, or **Ctrl / Cmd + Shift + H**.
+The complete implemented shortcut reference and upstream sources are in **[KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md)**. Open the same list from **Help → Keyboard shortcuts & about**, with **H** in command mode, or **Ctrl / Cmd + Shift + H**.
 
 | Shortcut | Action |
 | --- | --- |
@@ -98,11 +135,27 @@ The complete implemented shortcut reference and upstream sources are in **[KEYBO
 | Ctrl + Space | Request Java completion |
 | ↑ / ↓ | Navigate completion suggestions |
 | Enter / Tab | Accept the selected suggestion |
-| Ctrl / Cmd + S | Save notebook |
+| Ctrl / Cmd + S | Save active notebook or CSV |
 | Alt + N | New notebook |
 | Escape | Dismiss popup or enter command mode |
 
 Cell clipboard and undo/redo are browser-session state, and clipboard cells can be pasted between notebook tabs. Execution shortcuts apply to selected cells in document order. Line numbering, output visibility, scrolling, and layout flags are stored as notebook metadata. Search covers code, Markdown, and raw sources. The native text editor retains normal OS selection/navigation; next-occurrence selection uses a single selection rather than multiple cursors.
+
+### Markdown links
+
+Markdown cells support web, mail, workspace-file and heading links, including optional titles and angle-bracket destinations with spaces:
+
+```markdown
+[Website](https://example.com "Optional title")
+[E-mail](mailto:help@example.com)
+[Data](<Data/sales 2026.csv>)
+[Image preview](opencode.png)
+[Results](#results)
+
+## Results
+```
+
+File paths are relative to the configured data root, not the notebook folder. Clicking a workspace link uses validated file metadata and opens its corresponding tab (or downloads an unsupported type). `./` and percent-encoded names are supported; hidden paths, parent traversal and unsafe URL protocols are rejected. Section anchors use normalized lower-case hyphenated headings, with `-1`, `-2` suffixes for duplicates; expand folded sections before jumping. Code spans/fences are not interpreted as links. Web links use a new tab with opener protection. Exported HTML keeps web/mail/section links and converts workspace file links to relative file links; distribute those files separately at the referenced paths. Markdown image assets, unlike ordinary file links, are embedded for offline viewing.
 
 ## Notebook settings
 
@@ -117,7 +170,7 @@ String endpoint = requireLabVar("API_URL");
 String token = requireLabVar("API_TOKEN");
 ```
 
-The resolution order is **local value → environment variable → notebook default**. Definitions and non-secret defaults are saved in the `.jnb` file; local values are stored separately on this computer in a `.java-lab-values` directory beside the notebook working directory, with owner-only permissions where supported. Mark credentials as secret: they cannot have a notebook default, and their values are never returned by the settings API or included in a notebook download. You can also provide a value through the environment variable named in its definition before starting Java Lab.
+The resolution order is **local value → environment variable → notebook default**. Definitions and non-secret defaults are saved in the `.jnb` file; local values are stored separately in `.java-lab-values` beside the configured data root (by default `{workingDir}/.java-lab-values`), with owner-only permissions where supported. Mark credentials as secret: they cannot have a notebook default, and their values are never returned by the settings API or included in a notebook download. You can also provide a value through the environment variable named in its definition before starting Java Lab.
 
 **Notebook code is trusted Java code, not a sandbox.** A cell can print a credential or include it in an output that gets saved or exported. Clear sensitive outputs before sharing a notebook; do not put secrets in code cells or defaults.
 
@@ -214,6 +267,46 @@ List<String> topics = Forms.list("topics");
 
 The form supports text, textarea, number, single/multi-select, checkbox, email, and date fields. `.required(id)` marks a field mandatory, and `.range(id, min, max)` constrains a number field. Invalid input is shown at the field and rejected by the kernel before later code executes. After changing values, click **Apply values & run following cells** on the form. Saved dependent outputs are marked stale until rerun. Form and field IDs must start with a letter and contain letters, numbers, `_`, `.`, or `-` (maximum 100 characters). Field IDs identify values across the notebook, so use distinct IDs across forms. A rerun of the form cell preserves values already entered. Values are synchronized into the kernel before each later cell executes and are stored with the notebook; as with other Java state, restart/reopen requires rerunning code cells to recreate variables. Exported HTML displays saved form output but cannot execute later Java cells. Limits are 100 fields per form, 200 values per execution request, 100 KB of serialized values, and 16 total rich displays per snippet.
 
+## JSON, XML and TXT editor tabs
+
+Click a visible `.json`, `.xml` or `.txt` file to open a text-editor tab. Common text/source extensions (`.md`, `.yaml/.yml`, `.java`, `.sql`, `.properties`, `.log`, `.css`, `.js`, `.html/.htm`) use the same editor. Tabs retain independent drafts, cursor/scroll position and bounded undo history. **Save file**, **File → Save file** or **Ctrl / Cmd + S** persists edits; **Reload saved file** rereads disk after confirming before discarding a draft. Revision checks prevent stale writes over changes made by notebook code or another editor. Unsaved drafts remain after conflicts or format/validation errors.
+
+The native textarea has synchronized, escaped syntax highlighting and line numbers. TXT stays plain text; highlighting becomes plain text above 300,000 characters for responsiveness. **Tab / Shift + Tab** indent/outdent, Enter auto-indents, brackets pair/wrap selections, **Ctrl / Cmd + F** finds text, and **Ctrl / Cmd + Z / Shift + Z** or **Ctrl + Y** undo/redo typing and assisted changes. **Format** / **Alt + Shift + F** pretty-prints JSON/XML; **Validate** checks syntax. JSON formatting preserves raw number literals (including large integers), duplicate keys and key order. XML formatting preserves mixed content and `xml:space`; DTD/entity declarations and very large/deep structures are outside formatter support. This is basic editing support, not a schema-aware language server. Invalid/incomplete content may still be saved deliberately as a draft.
+
+Text files must be UTF-8 and at most **2 MB**. The editor preserves BOM and the detected line-ending style; mixed endings are normalized to that style on save. HTML/XML is never executed as markup. Supported images open previews; other binary/unsupported types download. Non-notebook file context menus include **Download file**, using attachment/octet-stream responses. Relative Java paths such as `Files.readString(Path.of("notes.txt"))` use the configured data root, matching the editor.
+
+XML validation posts the **current draft** to the server's namespace-aware Java parser and returns well-formedness errors with line/column information. It does not require saving first or depend on browser-specific `parsererror` markup. XML formatting runs this validation before applying changes. DTDs, external entities and external schemas are disabled; this is not XSD validation. A result finishing after a tab switch stays with its original document.
+
+## Image preview and embedding
+
+PNG, JPEG/JPG, GIF, BMP, WebP and SVG files open a **read-only image tab**, with MIME type, dimensions, byte size, Reload and Download original. The launcher's **Image file** entry uploads an existing image. Under the preview are **Java** and **Markdown** examples using the exact data-root-relative path, each with a **Copy** button. Spaces/special characters are correctly quoted/encoded; if clipboard access is unavailable, select the displayed source directly. Moving or renaming an open image refreshes its examples and preview URL.
+
+The pre-imported `Images` Java API displays a file as a rich, saved output:
+
+```java
+Images.show("images/photo.png");
+// Optional display bounds, preserving aspect ratio:
+Images.show(Path.of("images/photo.png"), 800, 600);
+```
+
+`show(String)` / `show(Path)` read when the cell runs. Outputs contain embedded image bytes and survive save/reopen/export even if the original file moves; rerun to refresh them. Supported formats match the preview. Image files are limited to 10 MB, 10,000 pixels per side / 40 million pixels, and share the per-snippet limit of 16 rich displays / 16 MB. SVG is parsed without DTDs/external entities and rendered in image mode, not inserted as active DOM markup; preview responses have a restrictive sandbox/content policy.
+
+In a Markdown cell, use a path relative to the **configured data root**, even when the notebook is in a subfolder:
+
+```markdown
+![Description](<images/photo.png>)
+```
+
+The preview's copied example percent-encodes special characters. Markdown images may only target supported visible workspace files, not external/data/file URLs, hidden paths or `..` traversal. Missing files show an unavailable-image message. The notebook stores paths, so share image files along with the notebook. **Export HTML embeds referenced Markdown images** for offline use, as well as existing Java image outputs. Missing/invalid assets stop export rather than leaving server links. Markdown assets are bounded to 100 referenced files / 32 MB encoded data per export.
+
+## Creating and renaming files
+
+Use **START SOMETHING NEW** to create a notebook, CSV, JSON, XML, TXT, YAML or SQL file in the current File Browser folder. Choose a filename; extensions are appended when omitted, and collisions get a numeric suffix. YAML accepts `.yaml`/`.yml`. New CSVs contain `column1,column2`, JSON an empty object, XML a valid declaration/root, and other text files start empty. The image entry uploads an image rather than creating a blank bitmap.
+
+The launcher intentionally offers document-creation cards for common working formats (CSV, JSON, XML, TXT, YAML, SQL) rather than every syntax-highlightable file extension. Use **File → New data/text file** to create another supported format, including Markdown, Java, JavaScript, CSS, HTML, Properties or Log.
+
+All visible file types can be renamed from the **File Browser context menu**, **F2** on a file row, **File → Rename file**, a **tab-name double-click**, or the tab context menu. Clicking an editor/preview title also renames it (notebook titles retain inline editing). Open editable files save first; a failed save, busy operation or name collision prevents rename. Notebook kernels/local values are retained and notebook names keep the native `.jnb` extension. Other extension changes select the appropriate editor when possible. Renaming does not convert content or rewrite paths in Java/Markdown/other files. Update references manually or copy refreshed image examples.
+
 ## JSON and CSV
 
 The executable JAR bundles **`org.json:json:20260814`** and **Apache Commons CSV 1.14.1**, plus Commons IO **2.20.0** and Commons Codec **1.19.0**. The org.json version is the latest published release verified against [Maven Central metadata](https://repo.maven.apache.org/maven2/org/json/json/maven-metadata.xml) on **2026-10-12**. Versions are pinned for reproducible builds.
@@ -273,9 +366,46 @@ try (var input = BOMInputStream.builder().setPath(Path.of("data.csv")).get();
 
 Use `CSVFormat.TDF` for tab-separated data, `setDelimiter(';')` for semicolon CSV, and `CSVPrinter` for correctly quoted output. Close parsers/readers with try-with-resources. Malformed input reports a parsing error instead of silently splitting fields. **`DataFormatsContext`** supplies these library versions, APIs, examples, and BOM guidance to Vibecode automatically.
 
+### CSV files, table editor, and notebook helper
+
+The File Browser lists `.csv` files (case-insensitive) alongside notebooks. Click a CSV to open its own **document tab** with an editable table. Multiple CSV files and notebooks share the tab bar; opening an already open file selects its existing tab. CSV tabs retain their independent unsaved edits, pagination, and scroll position when switching to another CSV, a notebook, or the launcher. CSV tabs do not create Java kernels, and notebook-only execution/AI commands are disabled while a CSV is selected.
+
+Records are shown in pages of 50; values can contain commas, quotes, and embedded newlines. Add/delete records and columns, edit the first record as well as the data, and use **Save CSV**, **File → Save file**, or **Ctrl / Cmd + S** to persist changes. Close a CSV using its tab's close button or **File → Close tab**. Unsaved edits require confirmation before closing or reloading; switching tabs never discards or implicitly saves them. Dirty dots also mark unsaved background tabs; the status bar describes the active document. A revision check prevents saving over a file changed by notebook code or another editor; your edits remain available after a conflict. Saving/reloading a background CSV updates that document without replacing the active editor. Moving an open CSV first saves it and updates the same tab's path.
+
+**Ctrl / Cmd + Shift + [ / ]** cycles through notebook, CSV and text tabs. **Alt + W / Ctrl + Shift + Q** closes the active document, and **Ctrl / Cmd + Shift + T** reopens the most recently closed document.
+
+CSV files use UTF-8. Comma, semicolon, tab, and pipe are detected automatically; **Read delimiter** reloads the saved file using an explicit delimiter when detection is ambiguous. Saving preserves string values, including leading zeros and empty cells, the BOM, detected record-separator style, and whether a final newline was present. Quoting is normalized by Commons CSV rather than preserving the file's original byte-for-byte formatting. Ragged record widths are retained unless explicitly edited.
+
+The pre-imported **`Csv`** helper uses the same format support:
+
+```java
+var salesCsv = Csv.load("Data/sales.csv");
+var salesRecords = salesCsv.records();
+Csv.save("Data/sales-copy.csv", salesCsv);
+```
+
+- `Csv.load(String)` / `load(Path)` auto-detect the delimiter; `load(String, char)` / `load(Path, Character)` select it explicitly.
+- `table.rows()` returns every record, including the first. `headers()` returns the first record; `data()` returns the remaining records.
+- `table.records()` returns `List<Map<String,String>>`, treating the first record as headers. It requires unique nonblank headers and records of matching width. All values remain strings; convert numbers explicitly.
+- Tables and their rows/maps are immutable. For edits, copy the rows, then pass them to `withRows(...)`:
+
+  ```java
+  var editedRows = salesCsv.rows().stream().map(row -> new ArrayList<>(row)).toList();
+  // Edit the copied cells as needed, for example editedRows.get(1).set(1, "42").
+  var editedCsv = salesCsv.withRows(editedRows);
+  Csv.save("Data/sales-edited.csv", editedCsv);
+  ```
+
+- `Csv.save(String, table)` / `save(Path, table)` create or replace a CSV using atomic replacement where supported. The parent folder must exist. Paths are relative to the **workspace root**, not the notebook's subfolder. Notebook code is trusted Java and may also use absolute paths.
+- A `Csv.Table` cell result shows a compact dimensions summary, not all file contents. Its loaded rows remain available to later cells and session-inspection tools without printing them.
+
+The helper/editor support **10 MB**, **10,000 records including the first**, **100 columns**, **100,000 cells**, and **100,000 characters per cell**. Use Commons CSV's streaming API directly for larger files. GUI reads/writes are restricted to visible workspace CSV files, with traversal and symlinks rejected.
+
+**Vibecode knows saved workspace CSV files automatically**, even with preceding-cell context disabled. `WorkspaceCsvContext` supplies relative file paths, sizes, detected delimiters, and bounded first-record column names; it does not include subsequent data rows. The first record is assumed to be a header for this catalog, so headerless files need explicit handling using `rows()`. The catalog covers visible nested folders, skips hidden paths/symlinks, and is bounded to 50 files and about 24,000 characters, with truncation reported. Up to 20 column names of 80 characters are included per file. Directory traversal is bounded to 500 directories / 5,000 entries and the supported folder depth. Unsaved table edits are excluded; save first. `DataFormatsContext` documents the helper APIs for generated code.
+
 ## Charts with JFreeChart
 
-**JFreeChart 1.5.6 is included in the executable JAR** and made available to every notebook kernel. No download or classpath setup is required when running the packaged app. The bundled library and display helper are unpacked to an application-owned temporary directory for JShell, and cleaned up on normal shutdown. Notebook files remain in the working directory.
+**JFreeChart 1.5.6 is included in the executable JAR** and made available to every notebook kernel. No download or classpath setup is required when running the packaged app. The bundled library and display helper are unpacked to an application-owned temporary directory for JShell, and cleaned up on normal shutdown. Notebook files remain in the configured data directory.
 
 Create a chart and show it inline:
 
@@ -413,6 +543,11 @@ Vibecode always receives **`GridContext`** with the version, wrapper methods, da
 | `AI_API_KEY` | Provider API key, sent as a Bearer token when set | Empty; required by OpenRouter and authenticated providers |
 | `AI_MODEL` | Model ID accepted by the selected provider | Empty; must be set |
 | `AI_API_URL` | API base URL including its version/path prefix | `https://openrouter.ai/api/v1` |
+| `AI_TOOLS_ENABLED` | Allow the model to inspect the current notebook session and library APIs | `true`; requires a model/provider supporting Chat Completions tools |
+| `AI_TIMEOUT` | Overall generation timeout, including all model requests and tool rounds; accepts durations such as `300s` or `10m` | `300s` (5 minutes) |
+| `AI_MAX_TOKENS` | Maximum output tokens per model response | `128000` |
+| `AI_MAX_TOOL_ROUNDS` | Maximum model responses requesting inspection before final code generation; range 1–64 | `16` |
+| `AI_MAX_TOOL_CALLS` | Maximum attempted inspection calls per generation; range 1–256 | `64` |
 
 Set these environment variables **in the process that launches Java Lab**:
 
@@ -458,7 +593,63 @@ Requests send the target source, instruction, chosen context, current-cell error
 
 Vibecode also receives the current notebook's configured variable names, secret flags, environment-variable bindings, and Maven coordinates, even when preceding-cell context is disabled. It knows to use `labVar("NAME")` or `requireLabVar("NAME")`. Notebook defaults, locally stored values, and resolved environment values are not added to this settings context. As with any AI request, code or notes you explicitly include in the target or optional context are sent to the configured provider.
 
-The default request timeout is 120 seconds and output budget is 128,000 tokens. Optional Spring properties are `lab.ai.timeout`, `lab.ai.max-tokens`, and `lab.ai.api-url`; credentials and model use `lab.ai.api-key` and `lab.ai.model`.
+The default overall generation timeout is 300 seconds (5 minutes) and output budget per model response is 128,000 tokens. Optional Spring properties are `lab.ai.timeout`, `lab.ai.max-tokens`, `lab.ai.tools-enabled`, `lab.ai.max-tool-rounds`, `lab.ai.max-tool-calls`, and `lab.ai.api-url`; credentials and model use `lab.ai.api-key` and `lab.ai.model`.
+
+For slower models or multi-round inspection, increase the timeout before starting the server:
+
+```sh
+export AI_TIMEOUT="10m"
+java -jar target/java-lab.jar
+```
+
+You can also pass `--lab.ai.timeout=10m` when launching the JAR. Restart the server after changing configuration. This controls the whole generation; the separate five-second kernel inspection limit and ten-second connection-establishment limit are unchanged. Local generation timeouts, connection failures, and HTTP timeouts reported by the provider have distinct messages. A longer local timeout cannot override a provider/proxy timeout.
+
+To reduce latency, choose a faster tool-capable model, disable preceding-cell context when it is unnecessary, and request focused edits. The model still has access to live session tools when preceding-cell context is off. `AI_MAX_TOKENS=16384` is an optional smaller output ceiling for typical cell edits; it limits excessively long generation but is not a guaranteed speed-up, and too small a ceiling can truncate responses (which are rejected). Further implementation optimizations could prefill session metadata to save an initial tool round or stream progress to improve feedback; the current provider uses non-streaming requests.
+
+### Live session and library tools
+
+When a notebook kernel is available and tools are enabled, Vibecode can inspect its **actual current state**, independently of the preceding-cell checkbox and saved outputs. Values do not need to have been printed. The model can use:
+
+- **`session_overview`**: active variable names/types, imports, methods, classes, loaded JARs, and Maven coordinates/version metadata where present.
+- **`inspect_variable`**: current scalar values and paged nested contents. Supports private and inherited object fields (where Java allows access), arrays, lists, other collections, and map entries/keys. Each child supplies a structured selector for deeper inspection. Cycles and inaccessible fields are marked. No model-supplied Java expressions, arbitrary getters, or object `toString()` methods are evaluated; collection interfaces are used to read collection contents.
+- **`search_library_classes`**: case-insensitive class-name search across the kernel's actual dependency JARs, including transitive Maven dependencies.
+- **`inspect_class`**: public constructors, methods/overloads (including inherited members), and fields for a fully qualified library/JDK class name or a simple session-defined type name, with filtering and pagination. This returns API signatures, not Javadoc prose, and does not initialize the class.
+
+Tool results are sent to the configured AI provider. Internal notebook-variable storage and temporary JShell variables are excluded; known configured secret values are redacted, including in nested scalar previews. Other ordinary session data is available to the model. Set `AI_TOOLS_ENABLED=false` to use text-only models or disable live inspection.
+
+Inspection runs on the kernel's serialized executor and is available while idle. It does not increment cell execution counts or create saved outputs. Each inspection has a five-second timeout. A generation defaults to up to 16 tool rounds/64 attempted calls, 50 entries per overview category, 25 children per variable page, 16 nested path steps, and 40 class/signature matches per page. Failed/malformed calls also consume the call budget. Scalar previews are limited to 1,000 characters, individual tool results to 24,000 characters, and accumulated tool result data to 120,000 characters. Oversized individual results are replaced with an explicit error asking for a narrower query.
+
+When the round, call, or accumulated context limit is reached, the server retains the facts already collected and makes **one final model request without tools**, asking for replacement code. Excess calls in a batch receive explicit not-executed results; context results that exceed the budget are explicitly marked as omitted. The Live activity popup shows the transition to final code generation. If the model still requests tools after they have been disabled, generation fails with a specific error instead of continuing indefinitely. The prompt also asks the model to group independent lookups, avoid repeated inspections, and stop once it has enough information.
+
+For particularly involved edits you can increase the inspection budget, for example:
+
+```sh
+AI_MAX_TOOL_ROUNDS=24 AI_MAX_TOOL_CALLS=96 AI_TIMEOUT=10m java -jar target/java-lab.jar
+```
+
+The configured AI timeout still covers the overall generation, **including the final code request**, with remaining time applied to each model request. Higher inspection limits do not reset that timeout. Cancel prevents applying a late response; server-side inspection/provider work may continue until it finishes or reaches its limits.
+
+The English system prompt instructs the model to preserve useful results in meaningfully named **top-level JShell variables**, reuse existing session definitions, avoid repeated imports and duplicated logic, and omit output expressions that serve only to expose values. Generated code is still applied without executing it. A result based on a kernel that was replaced while generating is discarded.
+
+### Output completeness and response diagnostics
+
+Before returning code to the browser, the OpenAI-compatible provider checks the **resulting whole cell** with JShell completion analysis and Java syntax parsing. Selection replacements are inserted into the original source for this check, so valid partial expressions or blocks are not mistaken for complete cells. Parsing never evaluates snippets, changes the live kernel, runs annotation processors, or resolves notebook/library types. It detects unfinished blocks, loops, strings/text blocks, comments, and malformed syntax; it does not guarantee that APIs, SQL, types, or runtime behavior are correct.
+
+If a provider reports `finish_reason: "length"`, or a supposedly finished response fails this check, its code is rejected and **one targeted correction request** is made. The correction receives the original task, collected facts, and the rejected answer (when present), asks for the full replacement rather than a continuation, and has no tools available. It uses the **remaining overall timeout**, without resetting inspection budgets or increasing the token limit. If that response is still truncated or malformed, generation fails and the original source and outputs remain unchanged. A correction may also follow the final no-tools request after inspection reaches its limit. Size limits, provider errors, and non-success finish reasons other than `length` remain explicit errors.
+
+The Live activity popup also shows metadata for each model request:
+
+- configured model ID and the model ID actually reported by the provider;
+- the requested output token ceiling and the provider's `finish_reason`;
+- reported input, output, and reasoning-token counts (when available).
+
+The request configuration is visible while waiting; reported fields are filled in when a response arrives. Missing/invalid usage or model metadata is labelled **not reported**, rather than inferred or shown as zero. Reasoning tokens may already be included in the provider's output count; the display does not add them together. These diagnostics contain no prompt, generated source, raw provider errors, or variable values. A successful generation returns them in the `diagnostics` array; progress snapshots preserve them after failures as well.
+
+On failure, **Last generation diagnostics** expands below the error. After a successful edit, reopen Vibecode on that cell to inspect its last diagnostics. This browser-session history is not saved in notebook files. Diagnostic metadata is retained independently of the short activity-event history, with at most 66 request records per server-side generation.
+
+While generating, hover over **Generating code…** or focus it with the keyboard to open a **Live activity** popup. It shows the latest model request, session/library inspection activity, inspected variable or class names, elapsed time, and a short timestamped history. The popup remains open when moving the pointer onto it; its history can be scrolled. **Escape** dismisses the popup without cancelling generation. These are server-reported activity summaries, not the model's internal reasoning; prompts, generated code, variable values, and raw tool results are not included in the activity feed.
+
+The browser adds a random `requestId` to its generation request and polls `GET /api/ai/progress/{requestId}` about every 750 ms. Progress responses are not cached. Polling stops on completion, failure, or cancellation; failed polls do not fail generation. After a generation error, a final progress fetch retrieves any last response diagnostics. The server keeps at most 32 activity events and 66 model-request diagnostic records per generation, and 128 tracked generations; it expires completed entries after five minutes and inactive entries after one hour, and can evict old completed entries when full. Requests without `requestId` retain generation, output checking, correction, and success-response diagnostics, but have no progress feed.
 
 ### Extensible AI context
 
@@ -474,7 +665,9 @@ The API separates the instruction, edit target, and context:
 }
 ```
 
-`start` and `end` are optional UTF-16 offsets selecting a nonempty range of `source`. If omitted, the entire cell is the target. The response is `{ "code": "...", "model": "..." }`; for a selection, `code` is only the replacement section.
+`start` and `end` are optional UTF-16 offsets selecting a nonempty range of `source`. If omitted, the entire cell is the target. The response contains `{ "code": "...", "model": "...", "diagnostics": [...] }`; for a selection, `code` is only the replacement section. Each diagnostic includes `request`, `configuredModel`, `reportedModel`, `maxTokens`, `finishReason`, `inputTokens`, `outputTokens`, and `reasoningTokens`; unreported provider fields are null.
+
+The request may also include an optional `kernelId` identifying the notebook's current kernel. The browser supplies this automatically. With tools enabled, the server binds all inspection tools to that kernel; the model cannot select a different kernel. Requests without `kernelId` retain the context-only generation flow.
 
 - **`AiContextProvider`** is a Spring extension point: additional beans can supply workspace files, kernel facts, documentation, retrieved references, or other context. `JavaRuntimeContext` supplies runtime details; `ChartContext`, `EChartsContext`, and `GridContext` supply the bundled visualization wrappers and their display APIs.
 - **`ContextItem`** contains `kind`, `title`, `content`, and arbitrary JSON `metadata`; the browser already uses notebook, notes, and diagnostics entries.
@@ -487,9 +680,9 @@ Instructions are limited to 10,000 characters and cell sources/replacements to 1
 
 New notebooks use **`.jnb` (Java notebook)**. Their JSON structure retains the nbformat 4 cell and output model, with Java language metadata and a Java Lab format version, so the contents remain easy to inspect and process. Existing metadata is retained.
 
-The file browser lists only `.jnb` notebooks and folders in the working directory and nested folders; uploaded data files and legacy `.ipynb` notebooks are not shown. Create folders from the file browser and open them to organize notebooks and uploaded data. Empty folders can be deleted. Existing `.ipynb` files remain accessible through the notebook API; renaming a legacy notebook converts its extension to `.jnb`, and downloading it also uses `.jnb`. Files are not automatically renamed on startup. Symbolic-link notebook files/folders and directory traversal are rejected.
+The file browser lists **all visible regular files** and supported folders in the configured data directory (`{workingDir}/data` by default). Hidden files and symbolic links are excluded. `.jnb` and legacy `.ipynb` files open as notebooks, `.csv` as editable tables, JSON/XML/TXT plus common source formats as text tabs, and supported images as previews; other types download. Create files/folders or upload data to organize the root. Empty folders can be deleted. Renaming a legacy notebook converts its extension to `.jnb`, and downloading it also uses `.jnb`. Files are not automatically renamed or relocated on startup. Internal path traversal and symlinks are rejected.
 
-Use **Upload file** in the file browser to place a data file in the current folder. CSV uploads display the header and up to 20 data rows (up to 30 columns) before you use the file from Java with `Path.of(...)`. The upload limit is **10 MB**; upload filenames cannot contain path separators or be notebook files (`.jnb`/`.ipynb`). Existing filenames are given a numeric suffix rather than overwritten. Uploaded files are local workspace data, not embedded in a notebook or its HTML export.
+Use **Upload file** in the file browser to place a data file in the current folder. Uploads open their matching editor/image preview (the CSV API also returns a bounded preview). The upload limit is **10 MB**; upload filenames cannot contain separators or be notebook files (`.jnb`/`.ipynb`). Existing names receive a numeric suffix. Uploaded data remains separate from notebook files, except embedded Java outputs; HTML export additionally embeds referenced Markdown images.
 
 HTML export is a read-only presentation of the current saved notebook, including its stored outputs; exporting does not run any cells. Raw HTML in Markdown and code/output text is escaped. Live Java sessions remain in Java Lab.
 
@@ -517,6 +710,7 @@ src/main/java/ch/software_atelier/java_lab/
   ai/                                Generation contracts, context providers, OpenAI-compatible transport/API
 src/main/resources/static/
   index.html                         Lab workspace
+  help.js / help.css                 Searchable offline usage guide, topic navigation, and live shortcut reference
   styles.css                         Responsive styling
   app.js                             Notebook editor and API client
   editor.css                         Highlighting, preview, completion styling
@@ -537,7 +731,7 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| GET | `/api/notebooks?folder=Projects` | Working directory, `.jnb` notebook listing, and child folders; omit `folder` for workspace root |
+| GET | `/api/notebooks?folder=Projects` | Configured data directory, all visible file entries (notebook/csv/text/image/file), and child folders; omit `folder` for the data root |
 | POST | `/api/notebooks?folder=Projects` | Create; optional `{ "name": "Example.jnb" }` |
 | GET / PUT / DELETE | `/api/notebooks/{name}?folder=Projects` | Read / save notebook JSON / delete |
 | PATCH | `/api/notebooks/{name}?folder=Projects` | Rename with `{ "name": "New.jnb" }` |
@@ -546,6 +740,17 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 | POST | `/api/notebooks/folders` | Create `{ "path": "Projects/2026" }` |
 | PATCH / DELETE | `/api/notebooks/folders?path=Projects/2026` | Rename an empty folder with `{ "name": "New name" }` / delete an empty folder |
 | POST | `/api/notebooks/uploads?folder=Projects` | Multipart `file`; returns stored name/path/size and CSV preview rows |
+| GET | `/api/csv?path=Projects/data.csv` | Read a CSV table plus revision; optional `delimiter` selects comma, semicolon, tab or pipe |
+| PUT | `/api/csv?path=Projects/data.csv` | Save `{ "table": { "rows": [...], "delimiter": ",", "recordSeparator": "\n", "bom": false, "trailingNewline": true }, "revision": "..." }`; rejects conflicting external edits |
+| GET | `/api/files/text?path=Projects/notes.txt` | Read supported UTF-8 text (normalized LF), syntax format, BOM/line-ending metadata, revision and byte size |
+| PUT | `/api/files/text?path=Projects/notes.txt` | Save `{ "content": "...", "bom": false, "recordSeparator": "\n", "revision": "..." }`; atomic replacement / conflict checks |
+| GET | `/api/files/download?path=Projects/image.png` | Download any visible regular file as an attachment |
+| POST | `/api/files` | Create `{ "folder": "Projects", "name": "data.json", "extension": "json" }`; returns name/path/type/format without overwriting |
+| PATCH | `/api/files/rename` | Rename `{ "path": "Projects/old.txt", "name": "new.txt" }`; retains folder, rejects conflicts |
+| POST | `/api/files/validate-xml` | Validate current draft `{ "content": "<root/>" }`; returns valid/message/line/column without saving |
+| GET | `/api/files/image-info?path=Projects/photo.png` | Image MIME/dimensions/size/revision |
+| GET | `/api/files/image?path=Projects/photo.png` | Validated image bytes for preview/Markdown, no-cache and sandbox headers |
+| GET | `/api/files/image-data?path=Projects/photo.png` | Image metadata plus embedded data URI for standalone export |
 | POST | `/api/kernels` | Create an independent Java kernel; pass `{ "notebook": "Projects/Example.jnb" }` for its variables and Maven dependencies |
 | POST | `/api/kernels/{id}/execute` | Execute `{ "code": "1 + 1", "formValues": { "name": "Ada" } }` |
 | POST | `/api/kernels/{id}/complete` | Analyze `{ "code": "System.out.pr", "cursor": 13 }`; returns replacement anchor and suggestions |
@@ -554,6 +759,7 @@ src/test/js/                         Rendering and export tests (Node built-ins)
 | DELETE | `/api/kernels/{id}` | Shut down kernel |
 | GET | `/api/ai/config` | Provider/model and configuration availability (no credentials) |
 | POST | `/api/ai/generate` | Generate a whole-cell or selection replacement with extensible context |
+| GET | `/api/ai/progress/{requestId}` | Latest generation activity and timestamped history; optional ID supplied with the generation request |
 
 The optional frontend rendering tests require Node.js 18+ and no npm dependencies:
 

@@ -23,21 +23,54 @@ window.LabPresentation = (() => {
     return html + escape(text.slice(end));
   }
 
-  function inline(text) {
-    const pattern = /`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_/g;
+  function workspaceFilePath(value){
+    let path;try{path=decodeURIComponent(value);}catch(_){return null;}
+    if(!path||path.startsWith('/')||path.includes('\\')||path.includes(':')||/[\x00-\x1f\x7f]/.test(path))return null;
+    const segments=path.split('/').filter(s=>s!=='.');if(segments.some(s=>!s||s==='..'||s.startsWith('.')))return null;
+    return segments.length?segments.join('/'):null;
+  }
+  function workspaceImagePath(value){const path=workspaceFilePath(value);return path&&/\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(path)?path:null;}
+  const headingSlug=value=>value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[`*_]/g,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'')||'section';
+  function linkHtml(label,target,title,options){
+    const caption=escape(label),description=title?` title="${escape(title)}"`:'';
+    if(/^https?:\/\//i.test(target)&&!/[\x00-\x20\x7f\\]/.test(target))return `<a href="${escape(target)}" target="_blank" rel="noopener noreferrer"${description}>${caption}</a>`;
+    if(/^mailto:[^\s]+$/i.test(target)&&!/[\x00-\x1f\x7f]/.test(target))return `<a href="${escape(target)}"${description}>${caption}</a>`;
+    if(target.startsWith('#')){
+      let fragment;try{fragment=decodeURIComponent(target.slice(1));}catch(_){return null;}
+      const slug=headingSlug(fragment);return `<a href="#md-${escape(encodeURIComponent(slug))}" data-md-anchor-link="${escape(slug)}"${description}>${caption}</a>`;
+    }
+    const path=workspaceFilePath(target);if(!path)return null;
+    const href=options.standalone?path.split('/').map(encodeURIComponent).join('/'):'api/files/download?path='+encodeURIComponent(path);
+    return `<a href="${escape(href)}"${options.standalone?'':` data-workspace-link="${escape(path)}"`}${description}>${caption}</a>`;
+  }
+  function inline(text,options={}) {
+    const pattern = /`([^`]+)`|!\[([^\]]*)\]\((?:<([^>\r\n]+)>|((?:\\.|[^\s()]|\((?:\\.|[^\s()])*\))+))\)|\[([^\]]+)\]\((?:<([^>\r\n]+)>|((?:\\.|[^\s()]|\((?:\\.|[^\s()])*\))+))(?:\s+"([^"\r\n]*)")?\)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_/g;
     let html = '', end = 0;
     for (const m of text.matchAll(pattern)) {
       html += escape(text.slice(end, m.index));
       if (m[1] !== undefined) html += `<code>${escape(m[1])}</code>`;
-      else if (m[2] !== undefined) html += `<a href="${escape(m[3])}" target="_blank" rel="noopener noreferrer">${escape(m[2])}</a>`;
-      else if (m[4] !== undefined || m[5] !== undefined) html += `<strong>${escape(m[4] ?? m[5])}</strong>`;
-      else html += `<em>${escape(m[6] ?? m[7])}</em>`;
+      else if(m[2]!==undefined){
+        const path=workspaceImagePath((m[3]??m[4]).replace(/\\([()])/g,'$1'));
+        if(!path)html+=escape(m[0]);
+        else{
+          options.collect?.(path);
+          const embedded=options.imageSources?.[path];
+          if(options.standalone&&!embedded)throw new Error('Markdown image asset is missing: '+path);
+          const source=embedded||'api/files/image?path='+encodeURIComponent(path);
+          if(embedded&&!/^data:image\/(?:png|jpeg|gif|bmp|webp|svg\+xml);base64,[A-Za-z0-9+/]+=*$/.test(embedded))throw new Error('Invalid embedded image asset');
+          html+=`<img class="workspace-image" style="max-width:100%;height:auto" src="${escape(source)}" alt="${escape(m[2])}" data-image-path="${escape(path)}"${options.standalone?'':' loading="lazy"'}>`;
+        }
+      }
+      else if (m[5] !== undefined) html += linkHtml(m[5],(m[6]??m[7]).replace(/\\([()])/g,'$1'),m[8],options)||escape(m[0]);
+      else if (m[9] !== undefined || m[10] !== undefined) html += `<strong>${escape(m[9] ?? m[10])}</strong>`;
+      else html += `<em>${escape(m[11] ?? m[12])}</em>`;
       end = m.index + m[0].length;
     }
     return html + escape(text.slice(end));
   }
 
-  function markdown(text) {
+  function markdown(text,options={}) {
+    options.headingCounts ||= new Map();
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     const html = [];
     const startsBlock = line => /^\s*$|^\s*(```|~~~)|^#{1,6}\s|^\s*([-*+] |\d+\. )|^> ?|^\s*(---+|\*\*\*+)\s*$/.test(line);
@@ -55,11 +88,15 @@ window.LabPresentation = (() => {
         continue;
       }
       const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
-      if (heading) { html.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); i++; continue; }
+      if (heading) {
+        const base=headingSlug(heading[2]),count=options.headingCounts.get(base)||0;options.headingCounts.set(base,count+1);
+        const slug=base+(count?'-'+count:'');options.collectHeading?.(slug);
+        html.push(`<h${heading[1].length} id="md-${escape(slug)}" data-md-anchor="${escape(slug)}">${inline(heading[2],options)}</h${heading[1].length}>`); i++; continue;
+      }
       if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) { html.push('<hr>'); i++; continue; }
       if (/^> ?/.test(line)) {
         const quote = []; while (i < lines.length && /^> ?/.test(lines[i])) quote.push(lines[i++].replace(/^> ?/,''));
-        html.push(`<blockquote>${markdown(quote.join('\n'))}</blockquote>`); continue;
+        html.push(`<blockquote>${markdown(quote.join('\n'),options)}</blockquote>`); continue;
       }
       const list = line.match(/^\s*([-*+]|\d+\.)\s+(.+)/);
       if (list) {
@@ -67,37 +104,45 @@ window.LabPresentation = (() => {
         while (i < lines.length) {
           const item = lines[i].match(ordered ? /^\s*\d+\.\s+(.+)/ : /^\s*[-*+]\s+(.+)/);
           if (!item) break;
-          items.push(`<li>${inline(item[1])}</li>`); i++;
+          items.push(`<li>${inline(item[1],options)}</li>`); i++;
         }
         const tag = ordered ? 'ol' : 'ul';
         html.push(`<${tag}>${items.join('')}</${tag}>`); continue;
       }
       if (line.includes('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i+1]) && tableCells(lines[i+1]).every(c => /^:?-{3,}:?$/.test(c))) {
         const headers = tableCells(line); i += 2; const rows = [];
-        while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(`<tr>${tableCells(lines[i++]).map(c=>`<td>${inline(c)}</td>`).join('')}</tr>`);
-        html.push(`<div class="table-scroll"><table><thead><tr>${headers.map(c=>`<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`); continue;
+        while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(`<tr>${tableCells(lines[i++]).map(c=>`<td>${inline(c,options)}</td>`).join('')}</tr>`);
+        html.push(`<div class="table-scroll"><table><thead><tr>${headers.map(c=>`<th>${inline(c,options)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`); continue;
       }
       const paragraph = [line]; i++;
       while (i < lines.length && !startsBlock(lines[i])) {
         if (lines[i].includes('|') && i+1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i+1])) break;
         paragraph.push(lines[i++]);
       }
-      html.push(`<p>${paragraph.map(inline).join('<br>')}</p>`);
+      html.push(`<p>${paragraph.map(line=>inline(line,options)).join('<br>')}</p>`);
     }
     return html.join('\n');
   }
 
   function imageHtml(output) {
-    const value = output.data?.['image/png'];
+    const mime=['image/png','image/jpeg','image/gif','image/bmp','image/webp','image/svg+xml'].find(type=>output.data?.[type]);
+    if(!mime)return '';
+    const value = output.data[mime];
     const encoded = (Array.isArray(value) ? value.join('') : typeof value === 'string' ? value : '').replace(/\s/g,'');
-    // Only embedded PNG bytes, never notebook-controlled URLs or markup.
-    if (!encoded.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return '';
+    // Only embedded image bytes, never notebook-controlled URLs or markup.
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return '';
+    const signatures={'image/png':['iVBORw0KGgo'],'image/jpeg':['/9j/'],'image/gif':['R0lGODdh','R0lGODlh'],'image/bmp':['Qk']};
+    if(signatures[mime]&&!signatures[mime].some(prefix=>encoded.startsWith(prefix)))return '';
+    if(mime==='image/webp'){
+      try{if(typeof atob!=='function')return '';const bytes=atob(encoded);if(bytes.length<12||bytes.slice(0,4)!=='RIFF'||bytes.slice(8,12)!=='WEBP')return '';}
+      catch(_){return '';}
+    }
     const title = output.data?.['text/plain'];
     const alt = Array.isArray(title) ? title.join('') : title || 'Java chart';
-    const size = output.metadata?.['image/png'] || {};
-    const width = Number.isInteger(size.width) && size.width >= 100 && size.width <= 2400 ? size.width : 900;
-    const height = Number.isInteger(size.height) && size.height >= 100 && size.height <= 2400 ? size.height : 520;
-    return `<img class="chart-image" width="${width}" height="${height}" src="data:image/png;base64,${encoded}" alt="${escape(alt)}">`;
+    const size = output.metadata?.[mime] || {};
+    const width = Number.isInteger(size.width) && size.width >= 1 && size.width <= 10000 ? size.width : 900;
+    const height = Number.isInteger(size.height) && size.height >= 1 && size.height <= 10000 ? size.height : 520;
+    return `<img class="chart-image" width="${width}" height="${height}"${mime==='image/svg+xml'?' style="max-width:100%;height:auto"':''} src="data:${mime};base64,${encoded}" alt="${escape(alt)}">`;
   }
 
   const echartsMime = 'application/vnd.apache.echarts+json';
@@ -263,9 +308,10 @@ window.LabPresentation = (() => {
     const title = name.replace(/\.(jnb|ipynb)$/, '');
     const codeCount = document.cells.filter(c => c.cell_type === 'code').length;
     const date = new Date().toLocaleDateString(undefined, {year:'numeric',month:'long',day:'numeric'});
+    const headingCounts=new Map();
     const cells = document.cells.map((c,index) => {
       const value = getSource(c);
-      if (c.cell_type === 'markdown') return `<section class="export-cell prose">${markdown(value)}</section>`;
+      if (c.cell_type === 'markdown') return `<section class="export-cell prose">${markdown(value,{standalone:true,headingCounts,imageSources:assets.markdownImages||{}})}</section>`;
       const code = c.cell_type === 'code';
       const outputs = (c.outputs || []).map(o => {
         const formatted=codeHtml(o);
@@ -294,5 +340,6 @@ window.LabPresentation = (() => {
     const gridCss=hasGrid?assets.gridCss.replace(/<\/style/gi,'<\\/style'):'';
     return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)} · Java Lab</title><style>${gridCss}${syntaxCss}${exportCss}${outputCss}</style></head><body><main><header class="cover"><div class="brand">JAVA LAB / NOTEBOOK</div><h1>${escape(title)}</h1><div class="subtitle"><span class="pill">Java · JShell</span>${codeCount} code ${codeCount===1 ? 'cell' : 'cells'} · ${escape(date)}</div></header><article class="document">${cells}</article><footer><span>Crafted with Java Lab</span><span>A self-contained notebook · Code, notes & results</span></footer></main>${scripts}</body></html>`;
   }
-  return {highlightJava, markdown, exportHtml, imageHtml, echartsHtml, echartsMime, gridHtml, gridMime, codeHtml, codeMime, formHtml, formMime, syntaxCss};
+  function markdownImagePaths(text){const paths=new Set();markdown(text,{collect:path=>paths.add(path)});return [...paths];}
+  return {highlightJava, markdown, markdownImagePaths, workspaceImagePath, workspaceFilePath, exportHtml, imageHtml, echartsHtml, echartsMime, gridHtml, gridMime, codeHtml, codeMime, formHtml, formMime, syntaxCss};
 })();

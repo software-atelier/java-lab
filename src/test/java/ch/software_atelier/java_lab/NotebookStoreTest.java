@@ -54,7 +54,7 @@ class NotebookStoreTest {
         var store = new NotebookStore(new ObjectMapper(), directory);
         var original = store.read(store.create("Original"));
         store.save("Legacy.ipynb", original);
-        assertThat(store.list()).extracting(NotebookStore.Entry::name).containsExactly("Original.jnb");
+        assertThat(store.list()).extracting(NotebookStore.Entry::name).containsExactly("Legacy.ipynb", "Original.jnb");
         assertThat(store.read("Legacy.ipynb")).isEqualTo(original);
         assertThat(store.rename("Legacy.ipynb", "Legacy.ipynb")).isEqualTo("Legacy.jnb");
         assertThat(store.read("Legacy.jnb")).isEqualTo(original);
@@ -131,7 +131,7 @@ class NotebookStoreTest {
         assertThat(Files.exists(directory.resolve("Safe/Notebook.jnb"))).isTrue();
     }
 
-    @Test void listsOnlyNativeNotebooksAndMovesUploadedDataFilesWithoutDisplayingThem() throws Exception {
+    @Test void listsNativeNotebooksAndCsvAndMovesUploadedDataFiles() throws Exception {
         var store = new NotebookStore(new ObjectMapper(), directory);
         store.createFolder("Input");
         store.createFolder("Output");
@@ -145,14 +145,14 @@ class NotebookStoreTest {
         Files.createSymbolicLink(directory.resolve("Input/linked.csv"), directory.resolve("Input/data.csv"));
 
         assertThat(store.list("Input")).extracting(NotebookStore.Entry::name, NotebookStore.Entry::type)
-            .containsExactly(tuple("Analysis.jnb", "notebook"));
+            .containsExactly(tuple("Analysis.jnb", "notebook"), tuple("data.csv", "csv"), tuple("Legacy.ipynb", "notebook"), tuple("notes.txt", "text"));
         assertThat(store.folders("")).extracting(NotebookStore.Folder::name).doesNotContain(".internal");
         assertThatThrownBy(() -> store.move("Input/data.csv", ".internal"))
             .isInstanceOf(ResponseStatusException.class);
         assertThat(store.move("Input/data.csv", "Output")).isEqualTo("Output/data.csv");
         assertThat(Files.readString(directory.resolve("Output/data.csv"))).isEqualTo("name\nAda\n");
-        assertThat(store.list("Output")).isEmpty();
-        assertThat(store.list("Input")).extracting(NotebookStore.Entry::name).containsExactly("Analysis.jnb");
+        assertThat(store.list("Output")).extracting(NotebookStore.Entry::name, NotebookStore.Entry::type).containsExactly(tuple("data.csv", "csv"));
+        assertThat(store.list("Input")).extracting(NotebookStore.Entry::name).containsExactly("Analysis.jnb", "Legacy.ipynb", "notes.txt");
         assertThatThrownBy(() -> store.move("Input/.hidden.txt", "Output"))
             .isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> store.move("Input/linked.csv", "Output"))
