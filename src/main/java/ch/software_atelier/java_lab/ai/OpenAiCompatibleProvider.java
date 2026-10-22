@@ -67,7 +67,25 @@ public class OpenAiCompatibleProvider implements CodeGenerationProvider {
     }
 
     @Override public CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools,
-                                                    CodeGeneration.Observer progress, CodeGeneration.Target target) {
+                                                     CodeGeneration.Observer progress, CodeGeneration.Target target) {
+        return generate(messages, tools, progress, target, "java");
+    }
+
+    public CodeGeneration.Result generateSql(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools) {
+        return generateSql(messages, tools, activity -> {});
+    }
+
+    public CodeGeneration.Result generateSql(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools, CodeGeneration.Observer observer) {
+        return generate(messages, tools, observer, null, "sql");
+    }
+
+    @Override public CodeGeneration.Result generateText(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools, CodeGeneration.Observer observer) {
+        return generate(messages, tools, observer, null, "text");
+    }
+
+    private CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools,
+                                          CodeGeneration.Observer progress, CodeGeneration.Target target, String language) {
+        boolean sql = language.equals("sql"), text = language.equals("text");
         if (!configured()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Set AI_MODEL and AI_API_KEY if your API requires authentication, then restart Java Lab (OpenRouter requires an API key)");
         if (!properties.toolsEnabled()) tools = null;
         var conversation = new ArrayList<>(messages);
@@ -83,7 +101,9 @@ public class OpenAiCompatibleProvider implements CodeGenerationProvider {
                     || toolCalls >= properties.maxToolCalls() || contextBudgetExhausted)) {
                     finalizing = true;
                     progress.accept("Inspection budget reached (" + inspectionRounds + " rounds, " + toolCalls + " calls); generating code from the collected context…");
-                    conversation.add(new CodeGeneration.Message("system", """
+                    conversation.add(new CodeGeneration.Message("system", sql || text
+                        ? "Inspection is complete. Return ONLY the requested replacement in the target format using the collected facts. Tools are unavailable."
+                        : """
                         The inspection phase is complete and tools are no longer available. Generate the final
                         replacement Java code now using the original edit target, instruction, and facts already
                         collected. Do not request any further tool calls, repeat inspections, or invent missing
@@ -104,6 +124,8 @@ public class OpenAiCompatibleProvider implements CodeGenerationProvider {
                 var payload = new LinkedHashMap<String,Object>();
                 payload.put("model", model()); payload.put("messages", conversation);
                 payload.put("stream", false); payload.put("max_tokens", properties.maxTokens());
+                if (openRouter && !properties.openrouterProviderSort().equals("default"))
+                    payload.put("provider", Map.of("sort", properties.openrouterProviderSort()));
                 if (tools != null && !finalizing) { payload.put("tools", tools.definitions()); payload.put("tool_choice", "auto"); }
                 JsonNode response = request.body(payload).retrieve().body(JsonNode.class);
                 if (response == null || response.has("error")) throw invalidResponse("The AI API returned no usable code; try again");
@@ -174,7 +196,19 @@ public class OpenAiCompatibleProvider implements CodeGenerationProvider {
                 if (!truncated && !finishReason.isBlank() && !finishReason.equals("stop")) throw invalidResponse("The model did not complete the edit; try another instruction or model");
                 JsonNode content = message.path("content");
                 if (!truncated && (!content.isTextual() || content.asText().isBlank())) throw invalidResponse("The model returned an empty response; try again");
+                if (text) {
+                    if (truncated) throw invalidResponse("The response was truncated. Try a narrower instruction or increase AI_MAX_TOKENS");
+                    String replacement = content.asText();
+                    if (replacement.length() > 100000) throw invalidResponse("Generated text exceeds 100,000 characters");
+                    return new CodeGeneration.Result(replacement, model(), List.copyOf(diagnostics));
+                }
                 String code = content.isTextual() ? content.asText().strip() : "";
+                if (sql) {
+                    if (truncated) throw invalidResponse("The SQL response was truncated. Try a narrower instruction or increase AI_MAX_TOKENS");
+                    code = code.replaceFirst("(?is)\\A```(?:sql)?\\s*\\R", "").replaceFirst("\\R?```\\s*\\z", "").strip();
+                    if (code.isBlank() || code.length() > 100000) throw invalidResponse("Generated SQL must contain 1–100,000 characters");
+                    return new CodeGeneration.Result(code, model(), List.copyOf(diagnostics));
+                }
                 var fenced = FENCED_CODE.matcher(code);
                 if (fenced.matches()) code = fenced.group(1).strip();
                 if (code.length() > 100_000) throw invalidResponse("Generated code exceeds the cell size limit");
@@ -264,6 +298,12 @@ public class OpenAiCompatibleProvider implements CodeGenerationProvider {
                 + (args != null && args.path("path").isArray() && !args.path("path").isEmpty() ? " (nested value)" : "") + "…";
             case "search_library_classes" -> "Searching loaded library classes…";
             case "inspect_class" -> "Inspecting class API" + safeIdentifier(args, "className") + "…";
+            case "sql_columns" -> "Reading database column metadata…";
+            case "sql_preview" -> "Reading bounded database sample rows…";
+            case "read_database" -> "Reading database query results…";
+            case "list_workspace_files" -> "Listing saved workspace files…";
+            case "read_workspace_file" -> "Reading saved workspace file content…";
+            case "read_openapi_spec" -> "Reading OpenAPI specification and schemas…";
             default -> "Running an inspection tool…";
         };
     }

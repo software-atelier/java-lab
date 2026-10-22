@@ -13,6 +13,72 @@ import static org.assertj.core.api.Assertions.*;
 class FileFeaturesTest {
     @TempDir Path directory;
     final ObjectMapper mapper=new ObjectMapper();
+    @Test void duplicatesFilesInTheirFolderWithoutChangingBytesOrReplacingExistingEntries() throws Exception {
+        var store=new NotebookStore(mapper,directory);
+        var controller=new FileController(new TextFileStore(store),store);
+        Files.createDirectory(directory.resolve("nested"));
+        byte[] content={0,(byte)255,13,10,42};
+        for(String name:List.of("data.csv","notes.txt","query.sql","photo.png","archive.bin","no-extension","book.jnb","legacy.ipynb")){
+            Files.write(directory.resolve("nested").resolve(name),content);
+            var copy=controller.duplicate(new FileController.DuplicateRequest("nested/"+name));
+            assertThat(copy.path()).startsWith("nested/");
+            assertThat(copy.name()).isNotEqualTo(name).contains("-copy");
+            assertThat(Files.readAllBytes(directory.resolve(copy.path()))).isEqualTo(content);
+            var second=controller.duplicate(new FileController.DuplicateRequest("nested/"+name));
+            assertThat(second.name()).contains("-copy-1");
+            assertThat(Files.readAllBytes(directory.resolve(copy.path()))).isEqualTo(content);
+            assertThat(Files.readAllBytes(directory.resolve("nested").resolve(name))).isEqualTo(content);
+        }
+        Files.createDirectory(directory.resolve("nested/blocked-copy.txt"));
+        Files.writeString(directory.resolve("nested/blocked.txt"),"source");
+        assertThat(store.duplicateFile("nested/blocked.txt").name()).isEqualTo("blocked-copy-1.txt");
+        for(String path:List.of("../outside.txt",".hidden","nested","/absolute.txt","nested/missing.txt"))
+            assertThatThrownBy(()->store.duplicateFile(path)).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        Files.createSymbolicLink(directory.resolve("alias.txt"),directory.resolve("nested/blocked.txt"));
+        assertThatThrownBy(()->store.duplicateFile("alias.txt")).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
+    @Test void notebookCopiesDoNotInheritLocalVariableValues() throws Exception {
+        var store=new NotebookStore(mapper,directory);String name=store.create("Original");var doc=store.read(name);
+        doc.withObject("metadata").withObject("java_lab").putArray("variables").addObject().put("name","TOKEN").put("secret",true);
+        store.save(name,doc);store.updateValues(name,Map.of("TOKEN","local-only"),List.of());
+        var copy=store.duplicateFile(name);
+        assertThat(store.read(copy.path())).isEqualTo(store.read(name));
+        assertThat(store.values().read(directory.resolve(copy.path()))).isEmpty();
+        assertThat(store.effectiveValues(name)).containsEntry("TOKEN","local-only");
+    }
+    @Test void deletesAllFileKindsInSubfoldersThroughTheFileController() throws Exception {
+        var store=new NotebookStore(mapper,directory);
+        var controller=new FileController(new TextFileStore(store),store);
+        Files.createDirectory(directory.resolve("nested"));
+        for(String name:List.of("data.csv","data.json","data.xml","notes.txt","notes.md","config.yaml","Main.java","query.sql","config.properties","app.log","style.css","app.js","index.html","photo.png","photo.svg","archive.bin","no-extension","book.jnb","legacy.ipynb")){
+            Path file=directory.resolve("nested").resolve(name);Files.writeString(file,"content");
+            controller.delete("nested/"+name);assertThat(file).doesNotExist();
+        }
+        assertThat(directory.resolve("nested")).isDirectory();
+        assertThatThrownBy(()->controller.delete("nested/missing.txt")).hasMessageContaining("404");
+        for(String path:List.of("../outside.txt",".hidden","nested","/absolute.txt"))
+            assertThatThrownBy(()->controller.delete(path)).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        Path target=Files.writeString(directory.resolve("keep.txt"),"keep");
+        Files.createSymbolicLink(directory.resolve("alias.txt"),target);
+        assertThatThrownBy(()->controller.delete("alias.txt")).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThat(target).hasContent("keep");
+    }
+    @Test void yamlValidationChecksAllDocumentsAndReportsLocationsWithoutConstructingTaggedObjects() throws Exception {
+        var store=new TextFileStore(new NotebookStore(mapper,directory));
+        assertThat(store.validateYaml("# empty document\n").valid()).isTrue();
+        assertThat(store.validateYaml("name: Ada\nactive: true\ntext: |\n  # literal\n---\nitems: [1, 2]\n").valid()).isTrue();
+        assertThat(store.validateYaml("value: !application/custom tagged\n").valid()).isTrue();
+        var invalid=store.validateYaml("name: Ada\nitems: [1, 2\n");
+        assertThat(invalid.valid()).isFalse();assertThat(invalid.line()).isGreaterThanOrEqualTo(2);assertThat(invalid.column()).isPositive();
+        assertThat(store.validateYaml("ok: true\n---\nitems: [\n").valid()).isFalse();
+        assertThat(store.validateYaml("name: Ada\n\tbroken: indent").valid()).isFalse();
+        assertThat(store.validateYaml("[".repeat(110)+"0"+"]".repeat(110)).valid()).isFalse();
+        assertThatThrownBy(()->store.validateYaml(null)).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(()->store.validateYaml("x".repeat(TextFileStore.MAX_BYTES+1))).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        var controller=new FileController(store,new NotebookStore(mapper,directory));
+        assertThat(controller.validateYaml(new FileController.YamlRequest("key: value")).valid()).isTrue();
+        try(var paths=Files.list(directory)){assertThat(paths).isEmpty();}
+    }
     @Test void xmlValidationUsesDraftContentAndReportsLineColumnWithoutChangingFiles() throws Exception {
         var store=new TextFileStore(new NotebookStore(mapper,directory));
         assertThat(store.validateXml("<?xml version=\"1.0\"?><root xmlns=\"urn:test\"><value/></root>").valid()).isTrue();

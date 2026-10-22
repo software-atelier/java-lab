@@ -8,6 +8,10 @@ public interface CodeGenerationProvider {
     boolean configured();
     String model();
     CodeGeneration.Result generate(List<CodeGeneration.Message> messages);
+    default CodeGeneration.Result generateText(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools,
+                                               CodeGeneration.Observer observer) {
+        return generate(messages, tools, observer);
+    }
     default CodeGeneration.Result generate(List<CodeGeneration.Message> messages, CodeGeneration.Tools tools) {
         return generate(messages);
     }

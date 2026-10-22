@@ -28,8 +28,8 @@ window.NotebookControls = (() => {
     ['Application','Ctrl / Cmd B','Toggle file browser (outside Markdown editor)'],['Application','Ctrl / Cmd Shift F / Alt 1','Focus file browser'],
     ['Application','Alt W / Ctrl Shift Q','Close document tab'],['Application','Ctrl / Cmd Shift [ / ]','Previous / next document tab'],
     ['Application','Ctrl / Cmd Shift T','Reopen closed document'],['Application','Ctrl / Cmd Shift D','Toggle simple interface (outside editor)'],
-    ['Application','Ctrl / Cmd P','Print notebook'],['Application','Alt N','New Java notebook (Java Lab)'],['Both','Alt Shift V','Vibecode selected Java cell']
-    ,['File browser','↑ / ↓','Focus previous / next file'],['File browser','Enter','Open file or download unsupported type'],['File browser','F2','Rename file'],['File browser','Delete','Delete notebook'],['File browser','Ctrl / Cmd D','Duplicate notebook file'],
+    ['Application','Ctrl / Cmd P','Print notebook'],['Application','Alt N','New Java notebook (Java Lab)'],['Both','Alt Shift V','Open AI for selected Java cell']
+    ,['File browser','↑ / ↓','Focus previous / next file'],['File browser','Enter','Open file or download unsupported type'],['File browser','F2','Rename file'],['File browser','Delete','Delete notebook'],['File browser','Ctrl / Cmd D','Duplicate file in the same folder'],
     ['Text editor','Tab / Shift Tab','Indent / outdent'],['Text editor','Enter','Auto-indent'],['Text editor','Ctrl / Cmd F','Find in file'],
     ['Text editor','Alt Shift F','Format JSON / XML'],['Text editor','Ctrl / Cmd Z / Shift Z; Ctrl Y','Undo / redo text edits']
   ];
@@ -215,7 +215,7 @@ window.NotebookControls = (() => {
     ['move-up','Move cells up'],['move-down','Move cells down'],['code-cell','Change to Java code'],['markdown-cell','Change to Markdown'],['raw-cell','Change to raw'],['select-all','Select all cells'],
     ['toggle-outputs','Toggle selected outputs'],['scroll-outputs','Toggle output scrolling'],['clear-selected','Clear selected outputs'],['clear','Clear all outputs'],
     ['line-numbers','Toggle cell line numbers'],['all-line-numbers','Toggle all line numbers'],['side-by-side','Toggle cell side-by-side layout'],['collapse-headings','Collapse all headings'],['expand-headings','Expand all headings'],
-    ['find','Find notebook source'],['find-replace','Find and replace'],['sidebar','Toggle sidebar'],['simple-mode','Toggle simple interface'],['export-html','Export HTML'],['download','Download notebook'],['print','Print notebook'],['vibecode','Vibecode selected cell'],['help','Help & usage guide'],['help-shortcuts','Keyboard shortcuts']
+    ['find','Find notebook source'],['find-replace','Find and replace'],['sidebar','Toggle sidebar'],['simple-mode','Toggle simple interface'],['export-html','Export HTML'],['download','Download notebook'],['print','Print notebook'],['vibecode','AI edit selected cell'],['help','Help & usage guide'],['help-shortcuts','Keyboard shortcuts']
   ];
   async function perform(name){try{await (commands[name]||actions[name])?.();}catch(e){notify(e.message,true);}}
   function switchTab(direction){const list=openDocuments();if(!list.length)return;const i=list.indexOf(state.active);state.active=list[(i+direction+list.length)%list.length];state.launcher=false;renderWorkspace();command();}
@@ -257,7 +257,7 @@ window.NotebookControls = (() => {
     if(file) {
       if(event.key==='F2'){consume(event);renameFile(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
       if(file.dataset.fileType==='notebook'&&event.key==='Delete'){consume(event);deleteNotebook(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));return;}
-      if(file.dataset.fileType==='notebook'&&accel&&key==='d'){consume(event);(async()=>{const folder=file.dataset.fileFolder || '';const document=await api('/notebooks/'+encodeURIComponent(file.dataset.file)+folderQuery(folder));const copy=await api('/notebooks'+folderQuery(folder),'POST',{name:file.dataset.file});await api('/notebooks/'+encodeURIComponent(copy.name)+folderQuery(folder),'PUT',document);await refreshFiles();notify('Notebook duplicated');})().catch(e=>notify(e.message,true));return;}
+      if(accel&&key==='d'){consume(event);duplicateFile(file.dataset.file,file.dataset.fileFolder||'').catch(e=>notify(e.message,true));return;}
       if(['ArrowUp','ArrowDown'].includes(event.key)){consume(event);const files=$$('#file-list [data-file]'),i=files.indexOf(file),next=Math.max(0,Math.min(i+(event.key==='ArrowUp'?-1:1),files.length-1));files[next]?.focus();return;}
     }
     if(event.key==='F2'&&activeDocument()){consume(event);perform('rename');return;}
@@ -265,7 +265,7 @@ window.NotebookControls = (() => {
     if(accel&&event.shiftKey&&key==='h'){consume(event);perform('help-shortcuts');return;}
     if(accel&&key==='s'){consume(event);perform(event.shiftKey?'save-as':'save');return;}
     if(event.altKey&&!accel&&key==='n'){consume(event);perform('new');return;}
-    if(n&&(editor||commandScope(event))&&event.altKey&&event.shiftKey&&!accel&&(event.code==='KeyV'||key==='v')&&n.document.cells[n.selected]?.cell_type==='code'&&!n.running){consume(event);perform('vibecode');return;}
+    if(n&&(editor||commandScope(event))&&event.altKey&&event.shiftKey&&!accel&&(event.code==='KeyV'||key==='v')&&n.document.cells[n.selected]&&!n.running){consume(event);perform('vibecode');return;}
     if(activeDocument()&&(event.altKey&&key==='w'||event.ctrlKey&&event.shiftKey&&key==='q')){consume(event);perform('close');return;}
     if(accel&&event.shiftKey&&event.code==='BracketRight'){consume(event);switchTab(1);return;}
     if(accel&&event.shiftKey&&event.code==='BracketLeft'){consume(event);switchTab(-1);return;}

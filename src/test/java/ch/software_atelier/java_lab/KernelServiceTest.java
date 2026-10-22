@@ -3,6 +3,8 @@ package ch.software_atelier.java_lab;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
@@ -12,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.*;
 
 @Timeout(60)
+@Execution(ExecutionMode.CONCURRENT)
 class KernelServiceTest {
     final KernelService kernels = new KernelService();
     @AfterEach void close() { kernels.close(); }

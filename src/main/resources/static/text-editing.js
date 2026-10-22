@@ -2,6 +2,7 @@
   const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function highlight(text,format){
     if(format==='text'||text.length>300000)return escape(text);
+    if(format==='yaml')return highlightYaml(text);
     const pattern=['xml','html'].includes(format)?/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[A-Za-z_][^>]*>/g
       :format==='json'?/"(?:\\.|[^"\\])*"|\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g
       :/\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|--[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:true|false|null|public|class|var|return|if|else|select|from|where)\b|\b\d+\b/gi;
@@ -11,6 +12,34 @@
       result+=escape(text.slice(end,match.index))+`<span class="syntax-${kind}">${escape(token)}</span>`;end=match.index+token.length;
     }
     return result+escape(text.slice(end));
+  }
+  function highlightYaml(text){
+    const span=(kind,value)=>`<span class="syntax-${kind}">${escape(value)}</span>`;
+    let blockIndent=null;
+    return text.split('\n').map(line=>{
+      const indent=line.match(/^ */)[0].length;
+      if(blockIndent!==null){
+        if(!line.trim()||indent>blockIndent)return span('string',line);
+        blockIndent=null;
+      }
+      // Consume plain scalars as a whole so URLs, hashes and apostrophes stay literal.
+      const tokens=/[ \t\r]+|#[^\r]*|"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[\[\]{},]|:(?=\s|$)|[?\-](?=\s|$)|[|>][1-9+-]*(?=\s|$)|(?:(?!:(?:\s|$))[^\s\[\]{},])+/g;
+      let result='',end=0;
+      for(const match of line.matchAll(tokens)){
+        let value=match[0],kind=null;
+        const tail=line.slice(match.index+value.length);
+        if(value[0]==='#')kind='comment';
+        else if(/^\s*:(?:\s|$)/.test(tail))kind='keyword';
+        else if(/^["']/.test(value))kind='string';
+        else if(/^[|>][1-9+-]*$/.test(value)){kind='keyword';blockIndent=indent;}
+        else if(/^(?:---|\.\.\.|[\[\]{},:?\-]|[&*!]\S+|%\S.*)$/.test(value))kind='keyword';
+        else if(/^(?:true|false|null|yes|no|on|off|~)$/i.test(value))kind='keyword';
+        else if(/^[+-]?(?:0[xX][\da-fA-F_]+|0[oO][0-7_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\.(?:inf|nan))$/i.test(value))kind='number';
+        else if(value.trim())kind='string';
+        result+=escape(line.slice(end,match.index))+(kind?span(kind,value):escape(value));end=match.index+value.length;
+      }
+      return result+escape(line.slice(end));
+    }).join('\n');
   }
   function formatJson(text){
     JSON.parse(text); // Validate syntax only; keep original number literals, duplicate keys and key order.

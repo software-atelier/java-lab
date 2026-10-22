@@ -16,9 +16,9 @@ import java.util.*;
 final class NotebookValues {
     private final ObjectMapper mapper;
     private final Path directory;
-    NotebookValues(ObjectMapper mapper, Path notebookRoot) {
+    NotebookValues(ObjectMapper mapper) {
         this.mapper = mapper;
-        this.directory = (notebookRoot.getParent() == null ? notebookRoot : notebookRoot.getParent()).resolve(".java-lab-values");
+        this.directory = Path.of(System.getProperty("user.home"), ".java-lab", "notebook-values");
     }
     private Path file(Path notebook) {
         try {

@@ -16,8 +16,28 @@ public class TextFileStore {
     public static final int MAX_BYTES = 2000000;
     private final NotebookStore files;
     public TextFileStore(NotebookStore files) { this.files = files; }
-    public record Document(String path, String content, String format, boolean bom, String recordSeparator, String revision, long size) {}
+    public record Document(String path, String content, String format, boolean bom, String recordSeparator, String revision, long size, SqlConfiguration sqlConfig) {}
     public record Validation(boolean valid, String message, Integer line, Integer column) {}
+    public Validation validateYaml(String content) {
+        if(content==null||content.length()>MAX_BYTES)throw invalid("Provide YAML text up to 2 MB");
+        var options=new org.yaml.snakeyaml.LoaderOptions();
+        options.setCodePointLimit(MAX_BYTES);
+        options.setNestingDepthLimit(100);
+        options.setMaxAliasesForCollections(50);
+        var yaml=new org.yaml.snakeyaml.Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(options));
+        try {
+            // Compose every document without constructing objects, including application-specific tags.
+            for(var document:yaml.composeAll(new java.io.StringReader(content))) { }
+            return new Validation(true,"Valid YAML",null,null);
+        } catch(org.yaml.snakeyaml.error.MarkedYAMLException e) {
+            var mark=e.getProblemMark();
+            String message=e.getProblem()==null?"YAML could not be parsed":e.getProblem();
+            return new Validation(false,message.substring(0,Math.min(400,message.length())),mark==null?null:mark.getLine()+1,mark==null?null:mark.getColumn()+1);
+        } catch(org.yaml.snakeyaml.error.YAMLException e) {
+            String message=e.getMessage()==null?"YAML could not be parsed":e.getMessage();
+            return new Validation(false,message.substring(0,Math.min(400,message.length())),null,null);
+        }
+    }
     public Validation validateXml(String content) {
         if(content==null||content.length()>MAX_BYTES)throw invalid("Provide XML text up to 2 MB");
         try {ch.software_atelier.java_lab.data.XmlDocuments.parse(content);return new Validation(true,"Valid XML (well-formed)",null,null);}
@@ -34,13 +54,21 @@ public class TextFileStore {
         boolean bom = content.startsWith("\ufeff");if (bom) content = content.substring(1);
         var matcher = java.util.regex.Pattern.compile("\r\n|\r|\n").matcher(content);
         String separator = matcher.find() ? matcher.group() : "\n";
-        return new Document(path, normalize(content), format(path), bom, separator, hash(bytes), bytes.length);
+        content = normalize(content);
+        boolean sql = format(path).equals("sql");
+        return new Document(path, sql ? SqlConfiguration.source(content) : content, format(path), bom, separator, hash(bytes), bytes.length,
+                sql ? SqlConfiguration.parse(content) : null);
     }
 
     public synchronized Document save(String path, String content, boolean bom, String separator, String revision) throws IOException {
+        return save(path, content, bom, separator, revision, read(path).sqlConfig());
+    }
+
+    public synchronized Document save(String path, String content, boolean bom, String separator, String revision, SqlConfiguration sqlConfig) throws IOException {
         Path target = resolve(path);
         if (content == null || content.length() > MAX_BYTES || content.indexOf('\0') >= 0 || revision == null || !revision.matches("[a-f0-9]{64}"))
             throw invalid("Provide UTF-8 text up to 2 MB and the file revision");
+        if (format(path).equals("sql") && sqlConfig != null) { sqlConfig.validate();content = sqlConfig.header() + content; }
         if (separator == null || !java.util.List.of("\n", "\r\n", "\r").contains(separator)) throw invalid("Invalid line ending");
         String text = (bom ? "\ufeff" : "") + normalize(content).replace("\n", separator);
         byte[] contentBytes;

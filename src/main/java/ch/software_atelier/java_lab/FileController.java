@@ -13,19 +13,24 @@ public class FileController {
     private final TextFileStore text;
     private final NotebookStore files;
     public FileController(TextFileStore text, NotebookStore files) { this.text = text;this.files = files; }
-    public record SaveRequest(String content, boolean bom, String recordSeparator, String revision) {}
+    public record SaveRequest(String content, boolean bom, String recordSeparator, String revision, SqlConfiguration sqlConfig) {}
     public record CreateRequest(String folder,String name,String extension) {}
     public record RenameRequest(String path,String name) {}
+    public record DuplicateRequest(String path) {}
     public record XmlRequest(String content) {}
+    public record YamlRequest(String content) {}
     @GetMapping("/info") public ResponseEntity<NotebookStore.FileEntry> info(@RequestParam String path) {return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.fileInfo(path));}
     @PostMapping public NotebookStore.FileEntry create(@RequestBody CreateRequest request) throws IOException {return files.createFile(request.folder(),request.name(),request.extension());}
     @PatchMapping("/rename") public NotebookStore.FileEntry rename(@RequestBody RenameRequest request) throws IOException {return files.renameFile(request.path(),request.name());}
+    @PostMapping("/duplicate") public NotebookStore.FileEntry duplicate(@RequestBody DuplicateRequest request) throws IOException {return files.duplicateFile(request.path());}
+    @DeleteMapping public void delete(@RequestParam String path) throws IOException {files.deleteFile(path);}
     @PostMapping("/validate-xml") public TextFileStore.Validation validateXml(@RequestBody XmlRequest request) {return text.validateXml(request.content());}
+    @PostMapping("/validate-yaml") public TextFileStore.Validation validateYaml(@RequestBody YamlRequest request) {return text.validateYaml(request.content());}
     @GetMapping("/text") public ResponseEntity<TextFileStore.Document> read(@RequestParam String path) throws IOException {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(text.read(path));
     }
     @PutMapping("/text") public TextFileStore.Document save(@RequestParam String path, @RequestBody SaveRequest request) throws IOException {
-        return text.save(path, request.content(), request.bom(), request.recordSeparator(), request.revision());
+        return text.save(path, request.content(), request.bom(), request.recordSeparator(), request.revision(), request.sqlConfig());
     }
     @GetMapping("/download") public ResponseEntity<Resource> download(@RequestParam String path) {
         var file = files.existingFile(path);

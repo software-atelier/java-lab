@@ -21,7 +21,7 @@ The defaults were checked against JupyterLab **4.6.x** and the classic Notebook 
 | Shift + Enter | Run selected cells in document order and select the next cell; at the end, create an editable cell |
 | Ctrl / Cmd + Enter | Run selected cells and keep the current mode/selection |
 | Alt + Enter | Run selected cells and insert a new editable cell below |
-| Alt + Shift + V | Open Vibecode for the selected Java code cell (including selected text in its editor) |
+| Alt + Shift + V | Open AI for the selected Java code cell (including selected text in its editor) |
 
 Explicit execution stops at the first error. Interrupting also stops a pending multi-cell run.
 
@@ -112,7 +112,7 @@ Regular typing, text selection, word movement, Home/End, and platform clipboard 
 | Enter on a file row | Open its editor tab, or download an unsupported file type |
 | F2 on a file row or active document | Rename any file |
 | Delete on a notebook row | Delete notebook via the existing dialog |
-| Ctrl / Cmd + D on a notebook row | Duplicate notebook file |
+| Ctrl / Cmd + D on a file row | Duplicate file in the same folder |
 
 Shortcuts do not treat letters typed in search fields, Grid.js filters, dialogs, or other form inputs as cell commands. Browser/OS-reserved keys depend on whether the browser delivers the event. Jupyter actions for terminals, debuggers, settings extensions, or additional dock panels are outside Java Lab's current notebook interface and are not remapped to unrelated commands.
 

@@ -1,14 +1,14 @@
 /* CSV documents share workspace tabs, while their table state stays independent of notebook kernels. */
 window.CsvEditor=(()=>{
   const pane=$('#csv-editor'),PAGE_SIZE=50,opening=new Map();
-  let current=null;
+  let current=null,grid=null;
   const chrome=()=>{renderTabs();updateStatus();};
   const error=(message,doc=current)=>{if(doc)doc.error=message;if(doc===current)renderError();chrome();};
   function renderError(){$('#csv-error').textContent=current?.error||'';$('#csv-error').hidden=!current?.error;}
   const width=()=>Math.max(1,...current.table.rows.map(row=>row.length));
   const cells=()=>current.table.rows.reduce((n,row)=>n+row.length,0);
   const endpoint=(path,delimiter)=>'/csv?path='+encodeURIComponent(path)+(delimiter===undefined?'':'&delimiter='+encodeURIComponent(delimiter));
-  function setBusy(doc,value){doc.busy=value;if(doc===current){pane.querySelectorAll('button,select,textarea').forEach(e=>e.disabled=value);status();}chrome();}
+  function setBusy(doc,value){doc.busy=value;if(doc===current){pane.querySelectorAll('button,input,select,textarea').forEach(e=>e.disabled=value);status();}chrome();}
   function status(){
     if(!current)return;
     $('#csv-state').textContent=current.busy?'Working…':current.dirty?'Unsaved changes':'Saved';
@@ -32,20 +32,49 @@ window.CsvEditor=(()=>{
   }
   function activate(doc){
     if(current===doc){if(doc){$('#csv-title').textContent=doc.path;renderError();status();}return;}
-    rememberPosition();current=doc;
-    if(doc){render();restorePosition();}
+    rememberPosition();disposeGrid();current=doc;
+    if(doc)render(true);
   }
   function columnName(index){let name='';for(index++;index;index=Math.floor((index-1)/26))name=String.fromCharCode(65+(index-1)%26)+name;return name;}
-  function render(){
-    const rows=current.table.rows,columns=width(),pages=Math.max(1,Math.ceil(rows.length/PAGE_SIZE));
+  function visibleRows(){const query=(current.search||'').toLowerCase();return current.table.rows.map((row,index)=>index).filter(index=>!query||current.table.rows[index].some(value=>String(value??'').toLowerCase().includes(query)));}
+  function disposeGrid(){grid?.destroy();grid=null;}
+  function renderGrid(shown,columns,restore){
+    const host=$('#csv-grid'),doc=current;
+    disposeGrid();host.innerHTML='';
+    const html=window.gridjs.html;
+    const table=new window.gridjs.Grid({
+      columns:[{id:'record',name:'#',width:'76px',formatter:index=>html(`${index+1}<button type="button" data-csv-remove-row="${index}" aria-label="Delete record ${index+1}" title="Delete record"${doc.busy?' disabled':''}>×</button>`)},
+        ...Array.from({length:columns},(_,col)=>({
+          id:'column-'+col,width:'220px',
+          name:html(`${columnName(col)} <button type="button" data-csv-remove-column="${col}" aria-label="Delete column ${columnName(col)}" title="Delete column"${doc.busy?' disabled':''}>×</button>`),
+          formatter:(value,row)=>{const index=row.cells[0].data;return html(`<textarea rows="1" maxlength="100000" data-csv-row="${index}" data-csv-col="${col}" aria-label="Record ${index+1}, column ${columnName(col)}" spellcheck="false"${doc.busy?' disabled':''}>${escapeHtml(value)}</textarea>`);}
+        }))],
+      data:shown.map(index=>[index,...Array.from({length:columns},(_,col)=>doc.table.rows[index][col]??'')]),
+      // Search and pagination retain original CSV record indices and per-tab state.
+      search:false,sort:false,pagination:false,
+      language:{noRecordsFound:doc.table.rows.length?'No records match this search.':'Empty CSV. Add a record to start editing.'}
+    });
+    grid=table;
+    table.on('ready',()=>{
+      if(current!==doc||grid!==table)return;
+      host.querySelectorAll('button,textarea').forEach(control=>control.disabled=doc.busy);
+      if(restore)restorePosition();
+    });
+    table.render(host);
+  }
+  function render(restore=false){
+    const rows=current.table.rows,columns=width(),query=current.search||'',visible=visibleRows(),pages=Math.max(1,Math.ceil(visible.length/PAGE_SIZE));
     current.page=Math.min(current.page,pages-1);
-    const start=current.page*PAGE_SIZE;
+    const start=current.page*PAGE_SIZE,shown=visible.slice(start,start+PAGE_SIZE);
     $('#csv-title').textContent=current.path;
+    if($('#csv-find').value!==query)$('#csv-find').value=query;
+    $('#csv-search').hidden=!current.searchOpen;
+    pane.querySelector('[data-csv-search-toggle]').ariaExpanded=String(!!current.searchOpen);
     $('#csv-delimiter').value=current.table.delimiter;
     $('#csv-info').textContent=`${rows.length} records · ${rows.length?columns:0} columns · UTF-8${current.table.bom?' with BOM':''} · ${current.table.recordSeparator==='\r\n'?'CRLF':current.table.recordSeparator==='\r'?'CR':'LF'} line endings`;
-    $('#csv-grid').innerHTML=rows.length?`<table><thead><tr><th>Record</th>${Array.from({length:columns},(_,col)=>`<th>${columnName(col)} <button type="button" data-csv-remove-column="${col}" aria-label="Delete column ${columnName(col)}" title="Delete column">×</button></th>`).join('')}</tr></thead><tbody>${rows.slice(start,start+PAGE_SIZE).map((row,i)=>`<tr><th>${start+i+1}<button type="button" data-csv-remove-row="${start+i}" aria-label="Delete record ${start+i+1}" title="Delete record">×</button></th>${Array.from({length:columns},(_,col)=>`<td><textarea rows="1" maxlength="100000" data-csv-row="${start+i}" data-csv-col="${col}" aria-label="Record ${start+i+1}, column ${columnName(col)}" spellcheck="false">${escapeHtml(row[col]??'')}</textarea></td>`).join('')}</tr>`).join('')}</tbody></table>`:'<div class="csv-empty">Empty CSV. Add a record to start editing.</div>';
-    $('#csv-page').textContent=`Page ${current.page+1} of ${pages} · ${rows.length?'records '+(start+1)+'–'+Math.min(start+PAGE_SIZE,rows.length):'no records'}`;
-    pane.querySelectorAll('button,select,textarea').forEach(e=>e.disabled=current.busy);
+    renderGrid(shown,columns,restore);
+    $('#csv-page').textContent=query?`${visible.length} matching records · Page ${current.page+1} of ${pages}`:`Page ${current.page+1} of ${pages} · ${rows.length?'records '+(start+1)+'–'+Math.min(start+PAGE_SIZE,rows.length):'no records'}`;
+    pane.querySelectorAll('button,input,select,textarea').forEach(e=>e.disabled=current.busy);
     pane.querySelector('[data-csv-action="previous"]').disabled=current.busy||current.page===0;
     pane.querySelector('[data-csv-action="next"]').disabled=current.busy||current.page===pages-1;
     renderError();status();
@@ -103,6 +132,7 @@ window.CsvEditor=(()=>{
     const rows=current.table.rows,columns=width();
     if(name==='add-row'){
       if(rows.length>=10000||cells()+columns>100000){error('CSV limit: 10,000 records and 100,000 cells');return;}
+      current.search='';
       rows.push(Array(columns).fill(''));current.page=Math.floor((rows.length-1)/PAGE_SIZE);changed();
     }else if(name==='add-column'){
       if(columns>=100 || Math.max(1,rows.length)*(columns+1)>100000){error('CSV limit: 100 columns and 100,000 cells');return;}
@@ -110,7 +140,7 @@ window.CsvEditor=(()=>{
       else for(const row of rows){while(row.length<columns)row.push('');row.push('');}
       changed();
     }else if(name==='previous')current.page=Math.max(0,current.page-1);
-    else if(name==='next')current.page=Math.min(Math.max(0,Math.ceil(rows.length/PAGE_SIZE)-1),current.page+1);
+    else if(name==='next')current.page=Math.min(Math.max(0,Math.ceil(visibleRows().length/PAGE_SIZE)-1),current.page+1);
     render();
   }
   $('#csv-grid').addEventListener('input',event=>{
@@ -122,6 +152,7 @@ window.CsvEditor=(()=>{
   });
   pane.addEventListener('click',event=>{
     if(!current||current.busy)return;
+    const searchToggle=event.target.closest('[data-csv-search-toggle]');if(searchToggle){setSearch(!current.searchOpen);return;}
     const row=event.target.closest('[data-csv-remove-row]'),col=event.target.closest('[data-csv-remove-column]'),button=event.target.closest('[data-csv-action]');
     if(row){current.table.rows.splice(Number(row.dataset.csvRemoveRow),1);changed();render();}
     else if(col){
@@ -129,9 +160,22 @@ window.CsvEditor=(()=>{
       for(const record of current.table.rows){record.splice(Number(col.dataset.csvRemoveColumn),1);if(!record.length)record.push('');}changed();render();
     }else if(button){if(button.dataset.csvAction==='reload')reload();else action(button.dataset.csvAction);}
   });
+  function setSearch(open){
+    if(!current||current.busy)return;
+    current.searchOpen=open;
+    if(!open){current.search='';current.page=0;}
+    render();
+    if(open){$('#csv-find').focus();$('#csv-find').select();}else $('#csv-grid').focus();
+  }
+  $('#csv-find').addEventListener('input',event=>{if(!current||current.busy)return;current.search=event.target.value;current.page=0;current.cursor=null;render();});
+  $('#csv-find-close').onclick=()=>setSearch(false);
+  $('#csv-search').addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setSearch(false);}});
   $('#csv-delimiter').addEventListener('change',()=>reload());
   $('#csv-save').onclick=()=>save();
   pane.addEventListener('focusout',event=>rememberCursor(event.target));
-  pane.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();event.stopPropagation();save();}});
+  pane.addEventListener('keydown',event=>{
+    if(!current||current.busy||event.isComposing)return;
+    if(event.ctrlKey||event.metaKey){const key=event.key.toLowerCase();if(key==='s'){event.preventDefault();event.stopPropagation();save();}else if(key==='f'){event.preventDefault();event.stopPropagation();setSearch(true);}}
+  });
   return {open,activate,save,close,refresh:doc=>{if(current===doc)render();}};
 })();

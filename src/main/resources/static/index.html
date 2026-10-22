@@ -25,6 +25,7 @@
   <script src="notebook-model.js" defer></script>
   <script src="getting-started.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="kernel-resources.js" defer></script>
   <script src="notebook-settings.js" defer></script>
   <script src="editor.js" defer></script>
   <script src="notebook-controls.js" defer></script>
@@ -32,6 +33,7 @@
   <script src="csv-editor.js" defer></script>
   <script src="text-editing.js" defer></script>
   <script src="text-editor.js" defer></script>
+  <script src="sql-editor.js" defer></script>
   <script src="image-viewer.js" defer></script>
   <script src="help.js" defer></script>
 </head>
@@ -39,7 +41,6 @@
 <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg"><defs>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3z"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h5"/></symbol>
-  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 9v11M15 9v11"/></symbol>
   <symbol id="i-braces" viewBox="0 0 24 24"><path d="M9 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h2M15 3h2a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-2"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6m8-12 6 6-6 6M14 3l-4 18"/></symbol>
   <symbol id="i-xml" viewBox="0 0 24 24"><path d="m7 6-5 6 5 6m10-12 5 6-5 6m-2-15-6 18"/></symbol>
@@ -53,6 +54,11 @@
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
   <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 3h13l3 3v15H4zM8 3v6h8V3M8 21v-8h8v8"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="m4 16-1 5 5-1L20 8l-4-4zM14 6l4 4"/></symbol>
+  <symbol id="i-add-row" viewBox="0 0 24 24"><path d="M3 3h18v10H3zM3 8h18M12 16v6M9 19h6"/></symbol>
+  <symbol id="i-add-column" viewBox="0 0 24 24"><path d="M3 3h10v18H3zM8 3v18M16 12h6M19 9v6"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 9v11M15 9v11"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
@@ -76,7 +82,7 @@
     <div class="menu"><button class="menu-trigger">Run</button><div class="menu-popup"><button data-action="run">Run selected cell <kbd>Ctrl Enter</kbd></button><button data-action="run-next">Run and select next <kbd>Shift Enter</kbd></button><button data-action="run-all">Run all cells</button><hr><button data-action="interrupt">Interrupt kernel</button><button data-action="restart">Restart kernel</button><button data-action="restart-run-all">Restart kernel &amp; run all</button></div></div>
     <div class="menu"><button class="menu-trigger">View</button><div class="menu-popup"><button data-action="palette">Command palette <kbd>Ctrl / ⌘ Shift C</kbd></button><button data-action="find">Find notebook source <kbd>Ctrl / ⌘ F</kbd></button><button data-action="line-numbers">Toggle cell line numbers <kbd>L</kbd></button><button data-action="toggle-outputs">Toggle selected outputs <kbd>O</kbd></button><button data-action="sidebar">Toggle file browser</button><button data-action="launcher">Open launcher</button></div></div>
     <div class="menu"><button class="menu-trigger">Help</button><div class="menu-popup help-menu" aria-label="Help topics">
-      <button data-action="help">Getting started</button><button data-action="help-configuration">Configuration &amp; environment</button><button data-action="help-files">Files &amp; tabs</button><button data-action="help-text">Text, JSON &amp; XML files</button><button data-action="help-images">Images &amp; embedding</button><button data-action="help-editing">Cells &amp; editing</button><button data-action="help-execution">Java &amp; sessions</button><button data-action="help-csv">CSV files &amp; helper</button><button data-action="help-settings">Variables &amp; libraries</button><button data-action="help-charts">Charts &amp; tables</button><button data-action="help-forms">Forms &amp; formatted data</button><button data-action="help-ai">Vibecode &amp; AI context</button><button data-action="help-ai-setup">AI setup &amp; diagnostics</button><button data-action="help-export">Export &amp; sharing</button><hr><button data-action="help-shortcuts">Keyboard shortcuts &amp; about <kbd>Ctrl / ⌘ Shift H</kbd></button>
+      <button data-action="help">Getting started</button><button data-action="help-configuration">Configuration &amp; environment</button><button data-action="help-files">Files &amp; tabs</button><button data-action="help-text">Text, JSON &amp; XML files</button><button data-action="help-images">Images &amp; embedding</button><button data-action="help-editing">Cells &amp; editing</button><button data-action="help-execution">Java &amp; sessions</button><button data-action="help-csv">CSV files &amp; helper</button><button data-action="help-settings">Variables &amp; libraries</button><button data-action="help-charts">Charts &amp; tables</button><button data-action="help-forms">Forms &amp; formatted data</button><button data-action="help-ai">AI &amp; context</button><button data-action="help-ai-setup">AI setup &amp; diagnostics</button><button data-action="help-export">Export &amp; sharing</button><hr><button data-action="help-shortcuts">Keyboard shortcuts &amp; about <kbd>Ctrl / ⌘ Shift H</kbd></button>
     </div></div>
   </nav>
   <span class="header-caption">YOUR LOCAL JAVA WORKSPACE</span><span class="local-badge"><span></span> Local</span>
@@ -97,7 +103,7 @@
       <div class="file-list-header"><span>Name</span><span>Modified</span></div><div id="file-list"></div>
       <div class="sidebar-note"><span class="tiny-dot"></span> Files saved directly to disk <div id="directory" title="Configured data directory"></div></div>
     </div>
-    <div id="running-panel" hidden><p class="panel-description">Each open notebook has its own Java session.</p><div id="kernel-list"></div></div>
+    <div id="running-panel" hidden><p class="panel-description">Open a notebook or manage its Java session here. Shutting down a kernel keeps its tab open.</p><div id="kernel-list"></div></div>
   </aside>
   <main class="main">
     <div class="tabbar"><div id="tabs"></div><button class="tab-add" data-action="launcher" title="Open launcher" aria-label="Open launcher"><svg><use href="#i-plus"/></svg></button></div>
@@ -129,37 +135,74 @@
         <div class="toolbar-group"><button class="icon-button" data-action="save" title="Save (Ctrl / ⌘ S)" aria-label="Save"><svg><use href="#i-save"/></svg></button><button class="icon-button" data-action="add" title="Insert cell below" aria-label="Insert cell"><svg><use href="#i-plus"/></svg></button></div>
         <div class="toolbar-group"><button class="run-button" data-action="run-next" title="Run and select next (Shift Enter)"><svg><use href="#i-play"/></svg> Run</button><button class="icon-button" data-action="interrupt" title="Interrupt kernel" aria-label="Interrupt kernel"><svg><use href="#i-stop"/></svg></button><button class="icon-button" data-action="restart" title="Restart kernel" aria-label="Restart kernel"><svg><use href="#i-refresh"/></svg></button><button class="text-button run-all" data-action="run-all">Run all</button><button class="text-button restart-run-all" data-action="restart-run-all">Restart &amp; run all</button></div>
         <div class="toolbar-group"><select id="cell-type" aria-label="Cell type"><option value="code">Code</option><option value="markdown">Markdown</option><option value="raw">Raw</option></select></div>
-        <button class="text-button vibe-button" data-action="vibecode" title="Generate or edit the selected Java cell with AI (Alt Shift V)">✦ Vibecode</button>
+        <button class="text-button vibe-button" data-action="vibecode" title="Generate or edit the selected cell with AI (Alt Shift V)">✦ AI</button>
         <span class="toolbar-spacer"></span><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button export-button" data-action="export-html" title="Download a styled, standalone HTML notebook">Export HTML ↗</button><span id="save-state" class="save-state"></span><span class="kernel-indicator"><span id="kernel-dot"></span> Java <span class="kernel-engine">JShell</span></span>
       </div>
       <div id="notebook-search" class="notebook-search" hidden><input id="notebook-query" aria-label="Find notebook source" placeholder="Find in notebook…"><span id="search-count"></span><button id="search-previous" class="secondary" title="Previous match">↑</button><button id="search-next" class="secondary" title="Next match">↓</button><button id="search-close" class="icon-button" aria-label="Close search">×</button><div id="replace-row" hidden><input id="notebook-replacement" aria-label="Replacement text" placeholder="Replace with…"><button id="replace-one" class="secondary">Replace</button><button id="replace-all" class="secondary">Replace all</button></div></div>
       <div class="notebook-scroll" id="notebook-scroll" tabindex="-1" aria-label="Notebook cells"><div class="notebook-title"><div><span class="notebook-label">JAVA NOTEBOOK</span><h2 id="notebook-name" tabindex="0" role="button" title="Click to rename notebook" aria-label="Rename notebook by editing its title"></h2><input id="notebook-name-editor" aria-label="Notebook title" maxlength="200" hidden></div><button class="text-button" data-action="settings" title="Notebook variables and Java libraries">Settings</button><button class="text-button" data-action="rename" title="Rename notebook">Rename</button></div><div id="cells"></div><button class="add-cell-bottom" data-action="add-end"><svg><use href="#i-plus"/></svg> Add a cell</button><div class="notebook-hint"><kbd>Esc</kbd> command mode <span>·</span> <kbd>Enter</kbd> edit mode <span>·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> run</div></div>
     </section>
     <section id="csv-editor" aria-labelledby="csv-title" hidden>
-      <div class="dialog-heading"><h2 id="csv-title" tabindex="0" role="button" title="Click to rename file">CSV table</h2></div>
-      <div class="csv-toolbar"><button type="button" class="secondary" data-csv-action="add-row">Add record</button><button type="button" class="secondary" data-csv-action="add-column">Add column</button><label>Read delimiter <select id="csv-delimiter" aria-label="CSV read delimiter (reloads saved file)"><option value=",">Comma</option><option value=";">Semicolon</option><option value="&#9;">Tab</option><option value="|">Pipe</option></select></label><button type="button" class="secondary" data-csv-action="reload">Reload saved file</button></div>
+      <h2 id="csv-title" tabindex="0" role="button" title="Click to rename file">CSV table</h2>
       <p id="csv-info"></p><p class="csv-help">All records are editable, including the first record. Java's Csv.records() uses that first record as column names. Save changes before using them in a notebook.</p>
       <div id="csv-error" role="alert" hidden></div>
-      <div id="csv-grid" class="csv-grid" tabindex="0" aria-label="Editable CSV table"></div>
-      <div class="csv-footer"><button type="button" class="secondary" data-csv-action="previous">Previous</button><span id="csv-page"></span><button type="button" class="secondary" data-csv-action="next">Next</button><span id="csv-state" role="status"></span><button type="button" class="primary" id="csv-save">Save CSV</button></div>
+      <div class="csv-code-block">
+      <div class="csv-toolbar editor-action-bar" role="toolbar" aria-label="CSV editor actions"><label title="Read delimiter">CSV <select id="csv-delimiter" aria-label="CSV read delimiter (reloads saved file)"><option value=",">Comma</option><option value=";">Semicolon</option><option value="&#9;">Tab</option><option value="|">Pipe</option></select></label><span class="editor-toolbar-spacer"></span><button type="button" class="editor-icon-button" data-csv-action="add-row" title="Add record" aria-label="Add record"><svg><use href="#i-add-row"/></svg></button><button type="button" class="editor-icon-button" data-csv-action="add-column" title="Add column" aria-label="Add column"><svg><use href="#i-add-column"/></svg></button><button type="button" class="editor-icon-button" id="csv-save" title="Save CSV (Ctrl / Cmd S)" aria-label="Save CSV"><svg><use href="#i-save"/></svg></button><button type="button" class="editor-icon-button" data-csv-search-toggle title="Find in CSV (Ctrl / Cmd F)" aria-label="Find in CSV" aria-expanded="false" aria-controls="csv-search"><svg><use href="#i-search"/></svg></button><button type="button" class="editor-icon-button" data-csv-action="reload" title="Reload saved file" aria-label="Reload saved file"><svg><use href="#i-refresh"/></svg></button></div>
+      <div id="csv-search" class="editor-search" hidden><input id="csv-find" aria-label="Find in CSV records" placeholder="Filter records…"><button type="button" id="csv-find-close" class="editor-icon-button" title="Close search (Escape)" aria-label="Close CSV search"><svg><use href="#i-close"/></svg></button></div>
+      <div id="csv-grid" class="csv-grid grid-table" tabindex="0" aria-label="Editable CSV table"></div>
+      </div>
+      <div class="csv-footer"><button type="button" class="editor-icon-button" data-csv-action="previous" title="Previous page" aria-label="Previous page">‹</button><span id="csv-page"></span><button type="button" class="editor-icon-button" data-csv-action="next" title="Next page" aria-label="Next page">›</button><span id="csv-state" role="status"></span></div>
     </section>
     <section id="text-editor" aria-labelledby="text-title" hidden>
       <h2 id="text-title" tabindex="0" role="button" title="Click to rename file">Text file</h2>
-      <div class="text-toolbar"><button type="button" id="text-save" class="primary">Save file</button><button type="button" id="text-reload" class="secondary">Reload saved file</button><button type="button" id="text-format" class="secondary" title="Format JSON/XML (Alt Shift F)">Format</button><button type="button" id="text-validate" class="secondary">Validate</button><input id="text-find" aria-label="Find text in this file" placeholder="Find in file…"><button type="button" id="text-find-previous" class="secondary" aria-label="Previous text match">↑</button><button type="button" id="text-find-next" class="secondary" aria-label="Next text match">↓</button><span id="text-find-status" role="status"></span></div>
       <p id="text-info"></p><div id="text-error" role="alert" hidden></div>
+      <dialog id="sql-settings-dialog" aria-labelledby="sql-settings-title">
+        <form id="sql-configuration">
+          <div class="dialog-heading"><h2 id="sql-settings-title">SQL connection settings</h2><button type="button" id="sql-settings-close" class="icon-button" aria-label="Close SQL settings">×</button></div>
+          <label>JDBC Maven package<input id="sql-maven" placeholder="org.postgresql:postgresql:42.7.8" required></label>
+          <label>JDBC URL<input id="sql-url" placeholder="jdbc:postgresql://localhost:5432/database" required></label>
+          <label>User<input id="sql-user" autocomplete="off"></label>
+          <label>Password<input id="sql-password" type="password" autocomplete="new-password" placeholder="Leave empty to keep stored password"></label>
+          <label><input id="sql-clear-password" type="checkbox"> Clear stored password</label>
+          <p>Package and URL are stored in hidden SQL comments. User and password are stored locally in ~/.java-lab/sql-credentials/.</p>
+          <div id="sql-settings-error" class="vibe-error" role="alert" hidden></div>
+          <div class="dialog-actions"><button type="button" id="sql-settings-cancel" class="secondary">Cancel</button><button type="submit" class="primary">Save connection &amp; file</button></div>
+        </form>
+      </dialog>
+      <dialog id="sql-browser" aria-labelledby="sql-browser-title">
+        <div class="dialog-heading"><h2 id="sql-browser-title">Table browser</h2><button type="button" id="sql-browser-close" class="icon-button" aria-label="Close table browser">×</button></div>
+        <div class="text-toolbar"><input id="sql-table-filter" aria-label="Filter tables" placeholder="Filter tables…"><button id="sql-schema-refresh" type="button" class="secondary">Refresh schema</button><span id="sql-schema-info" role="status"></span></div><div id="sql-tables"></div>
+        <div id="sql-browser-error" class="vibe-error" role="alert" hidden></div>
+      </dialog>
+      <div class="text-code-block">
+        <div id="sql-tools" hidden><span class="sql-language">SQL</span><span id="sql-connection-info"></span><div class="sql-actions" role="toolbar" aria-label="SQL editor actions">
+          <button type="button" id="sql-run" title="Run selection or file (Ctrl / Cmd Enter)" aria-label="Run SQL"><svg><use href="#i-play"/></svg><span>Run</span></button>
+          <button type="button" id="sql-vibecode" class="sql-vibe" title="AI (Alt Shift V)">✦ <span>AI</span></button>
+          <button type="button" id="sql-undo-ai" title="Undo last AI edit" aria-label="Undo AI edit">↶</button>
+          <button type="button" id="sql-configure" title="Connection settings" aria-label="SQL connection settings"><svg><use href="#i-config"/></svg></button>
+          <button type="button" id="sql-browse" title="Table browser" aria-label="Table browser"><svg><use href="#i-table"/></svg></button>
+          <button type="button" id="sql-save" title="Save file (Ctrl / Cmd S)" aria-label="Save SQL file"><svg><use href="#i-save"/></svg></button>
+          <button type="button" id="sql-find" title="Find (Ctrl / Cmd F)" aria-label="Find in SQL"><svg><use href="#i-search"/></svg></button>
+          <button type="button" id="sql-reload" title="Reload saved file" aria-label="Reload SQL file"><svg><use href="#i-refresh"/></svg></button>
+        </div></div>
+        <div id="text-file-toolbar" class="editor-action-bar" role="toolbar" aria-label="Text editor actions"><span id="text-language" class="sql-language"></span><span class="editor-toolbar-spacer"></span><button type="button" id="text-vibecode" class="text-button vibe-button" title="AI (Alt Shift V)">✦ AI</button><button type="button" id="text-undo-ai" class="text-button" title="Undo the last AI edit" hidden>Undo AI edit</button><button type="button" id="text-format" class="editor-icon-button" title="Format JSON/XML (Alt Shift F)" aria-label="Format"><svg><use href="#i-code"/></svg></button><button type="button" id="text-validate" class="editor-icon-button" title="Validate JSON/XML/YAML" aria-label="Validate"><svg><use href="#i-check"/></svg></button><button type="button" id="text-save" class="editor-icon-button" title="Save file (Ctrl / Cmd S)" aria-label="Save file"><svg><use href="#i-save"/></svg></button><button type="button" id="text-find-toggle" class="editor-icon-button" title="Find in file (Ctrl / Cmd F)" aria-label="Find in file" aria-expanded="false" aria-controls="text-search"><svg><use href="#i-search"/></svg></button><button type="button" id="text-reload" class="editor-icon-button" title="Reload saved file" aria-label="Reload saved file"><svg><use href="#i-refresh"/></svg></button></div>
+        <div id="text-search" class="editor-search" hidden><input id="text-find" aria-label="Find text in this file" placeholder="Find in file…"><button type="button" id="text-find-previous" class="editor-icon-button" title="Previous text match" aria-label="Previous text match">↑</button><button type="button" id="text-find-next" class="editor-icon-button" title="Next text match" aria-label="Next text match">↓</button><span id="text-find-status" role="status"></span><button type="button" id="text-find-close" class="editor-icon-button" title="Close search (Escape)" aria-label="Close text search"><svg><use href="#i-close"/></svg></button></div>
       <div class="text-source"><pre id="text-highlight" aria-hidden="true"></pre><div class="text-gutter" aria-hidden="true"><pre id="text-line-numbers"></pre></div><textarea id="text-input" wrap="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Text file contents"></textarea></div>
+      </div>
+      <div id="sql-results" aria-label="SQL results" aria-live="polite" hidden></div>
       <div class="text-footer"><span>Tab / Shift Tab indent · Enter auto-indent · Ctrl / Cmd F find · Alt Shift F format · Ctrl / Cmd Z undo</span><span id="text-state" role="status"></span></div>
     </section>
     <section id="image-viewer" aria-labelledby="image-title" hidden>
-      <div class="image-toolbar"><h2 id="image-title" tabindex="0" role="button" title="Click to rename file">Image</h2><button type="button" id="image-reload" class="secondary">Reload</button><button type="button" id="image-download" class="secondary">Download original</button><button type="button" class="secondary" data-action="rename">Rename</button></div>
-      <p id="image-info"></p><div id="image-error" role="alert" hidden></div><div id="image-preview" aria-label="Image preview"></div>
+      <h2 id="image-title" tabindex="0" role="button" title="Click to rename file">Image</h2>
+      <p id="image-info"></p><div id="image-error" role="alert" hidden></div>
+      <div class="image-code-block"><div class="image-toolbar editor-action-bar" role="toolbar" aria-label="Image viewer actions"><span class="sql-language">IMAGE</span><span class="editor-toolbar-spacer"></span><button type="button" id="image-download" class="editor-icon-button" title="Download original" aria-label="Download original"><svg><use href="#i-download"/></svg></button><button type="button" class="editor-icon-button" data-action="rename" title="Rename image" aria-label="Rename image"><svg><use href="#i-edit"/></svg></button><button type="button" id="image-reload" class="editor-icon-button" title="Reload image" aria-label="Reload image"><svg><use href="#i-refresh"/></svg></button></div><div id="image-preview" aria-label="Image preview"></div></div>
       <div class="image-examples"><section><h3>Use in a Java code cell</h3><pre id="image-java-example" tabindex="0"></pre><button type="button" id="image-copy-java" class="secondary">Copy Java example</button></section><section><h3>Use in a Markdown cell</h3><pre id="image-md-example" tabindex="0"></pre><button type="button" id="image-copy-md" class="secondary">Copy Markdown example</button></section></div>
     </section>
   </main>
 </div>
-<footer class="statusbar"><span><span class="status-dot"></span><span id="connection-state">Connecting…</span></span><span id="status-message">Java Lab</span><span class="status-spacer"></span><span id="notebook-mode" hidden></span><span id="cell-position"></span><span id="kernel-status">Java · JShell</span><span class="status-version">v1.5.0</span></footer>
+<footer class="statusbar"><span><span class="status-dot"></span><span id="connection-state">Connecting…</span></span><span id="status-message">Java Lab</span><span class="status-spacer"></span><span id="notebook-mode" hidden></span><span id="cell-position"></span><span id="kernel-status">Java · JShell</span><span class="status-version">v1.6.0</span></footer>
 <input id="upload-input" type="file" hidden aria-label="Upload data file">
-<div id="toast" class="toast" role="status" hidden></div>
+ <div id="toast" class="toast" role="status" hidden></div>
+ <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" hidden><span class="loading-spinner" aria-hidden="true"></span><span id="loading-label">Opening document…</span></div>
 <dialog id="command-palette"><div class="dialog-heading"><h2>Command palette</h2><button type="button" id="palette-close" class="icon-button" aria-label="Close command palette">×</button></div><input id="palette-query" placeholder="Search commands…" aria-label="Search commands" autocomplete="off"><div id="palette-list" role="listbox" aria-label="Commands"></div></dialog>
 <dialog id="help-dialog" aria-labelledby="help-title" aria-describedby="help-intro">
   <div class="dialog-heading"><h2 id="help-title">Java Lab help</h2><button type="button" id="help-close" class="icon-button" aria-label="Close help">×</button></div>
@@ -171,27 +214,28 @@
 <dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form"><div class="dialog-heading"><h2 id="settings-title">Notebook settings</h2><button type="button" class="icon-button" id="settings-close" aria-label="Close settings">×</button></div><p class="settings-intro">Variables and Maven libraries belong to this notebook. Use <code>labVar("NAME")</code> or <code>requireLabVar("NAME")</code> in Java cells.</p><div class="settings-scroll"><section><h3>Variables &amp; credentials</h3><p>Names, environment mappings and non-secret defaults are saved in the notebook. Local values stay outside the document. Never print credentials in cell output.</p><div id="settings-variables"></div><button type="button" class="secondary" id="settings-add-variable">Add variable</button></section><section><h3>Maven libraries</h3><p>Use <code>groupId:artifactId:version</code>. Transitive dependencies are loaded when this notebook's kernel starts.</p><div id="settings-dependencies"></div><button type="button" class="secondary" id="settings-add-dependency">Add library</button></section></div><div id="settings-error" role="alert" hidden></div><p class="settings-restart-note">Applying changes starts a fresh Java session. Existing Java variables, imports and definitions will be lost; cells and outputs remain.</p><div class="dialog-actions"><button type="button" class="secondary" id="settings-cancel">Cancel</button><button class="primary" id="settings-apply">Apply &amp; restart kernel</button></div></form></dialog>
 <dialog id="vibe-dialog">
   <form id="vibe-form">
-    <div class="dialog-heading"><h2>✦ Vibecode</h2><button type="button" class="icon-button" id="vibe-close" aria-label="Close Vibecode"><svg><use href="#i-close"/></svg></button></div>
+    <div class="dialog-heading"><h2>✦ AI</h2><button type="button" class="icon-button" id="vibe-close" aria-label="Close AI"><svg><use href="#i-close"/></svg></button></div>
     <div class="vibe-model" id="vibe-model">AI</div>
-    <div class="vibe-target-heading"><span id="vibe-target-label">REPLACE CELL</span><span>JAVA · JSHELL</span></div>
+    <div class="vibe-target-heading"><span id="vibe-target-label">REPLACE CELL</span><span id="vibe-language">JAVA · JSHELL</span></div>
     <pre class="vibe-target"><code id="vibe-target-code"></code></pre>
     <label class="vibe-label" for="vibe-prompt">What would you like to build or change?</label>
     <textarea id="vibe-prompt" placeholder="e.g. Fetch a JSON document and print its status, or refactor this into a reusable method…" required maxlength="10000" rows="4"></textarea>
-    <label class="vibe-context-option"><input type="checkbox" id="vibe-notebook-context" checked> Include preceding cells and outputs <span id="vibe-context-count"></span></label>
+    <label id="vibe-notebook-option" class="vibe-context-option"><input type="checkbox" id="vibe-notebook-context" checked> Include preceding cells and outputs <span id="vibe-context-count"></span></label>
+    <p id="vibe-sql-context" class="vibe-context-option" hidden>Database structure is included automatically. Read-only tools can inspect columns and sample rows.</p>
     <details class="vibe-context"><summary>Additional context</summary><textarea id="vibe-context-notes" placeholder="Requirements, sample data, API details, or other notes…" maxlength="100000" rows="3" aria-label="Additional AI context"></textarea></details>
     <div id="vibe-error" class="vibe-error" role="alert" hidden></div>
     <div id="vibe-progress" class="vibe-progress" hidden>
-      <button type="button" id="vibe-progress-trigger" class="vibe-progress-trigger" aria-describedby="vibe-progress-popup">Generating code…</button>
-      <section id="vibe-progress-popup" class="vibe-progress-popup" role="tooltip">
-        <strong>Live activity</strong>
+      <button type="button" id="vibe-progress-trigger" class="vibe-progress-trigger" aria-controls="vibe-progress-popup">Generating code…</button>
+      <section id="vibe-progress-popup" class="vibe-progress-popup" aria-labelledby="vibe-progress-title">
+        <div class="vibe-progress-heading"><strong id="vibe-progress-title">Live activity</strong><span id="vibe-progress-elapsed">Elapsed: 0s</span></div>
         <div id="vibe-progress-activity" role="status">Preparing generation…</div>
-        <pre id="vibe-progress-log" tabindex="0" aria-label="Generation activity history"></pre>
-        <pre id="vibe-progress-diagnostics" tabindex="0" aria-label="Model response diagnostics" hidden></pre>
-        <small>Model requests and session inspection activity.</small>
+        <details id="vibe-progress-history" class="vibe-progress-details"><summary>Activity history <span id="vibe-progress-event-count"></span></summary><pre id="vibe-progress-log" tabindex="0" aria-label="Generation activity history"></pre></details>
+        <details id="vibe-progress-model-details" class="vibe-progress-details" hidden><summary>Model &amp; tokens <span id="vibe-progress-request-count"></span></summary><pre id="vibe-progress-diagnostics" tabindex="0" aria-label="Model response diagnostics" hidden></pre></details>
+        <div class="vibe-progress-footer">Model requests and session inspection activity.</div>
       </section>
     </div>
     <details id="vibe-diagnostics" class="vibe-diagnostics" hidden><summary>Last generation diagnostics</summary><pre id="vibe-diagnostics-text" tabindex="0"></pre></details>
-    <div class="vibe-note">The AI can inspect current session values, including nested private fields, and loaded library APIs when tools are enabled. Replaces the cell or selected text. Undo is available after applying.</div>
+    <div id="vibe-note" class="vibe-note">The AI can inspect current session values, including nested private fields, and loaded library APIs when tools are enabled. Replaces the cell or selected text. Undo is available after applying.</div>
     <div class="dialog-actions"><button type="button" class="secondary" id="vibe-cancel">Cancel</button><button class="primary" id="vibe-generate">Generate & apply</button></div>
   </form>
 </dialog>

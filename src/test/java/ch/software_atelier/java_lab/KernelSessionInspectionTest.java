@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.*;
 
 @Timeout(60)
+@Execution(ExecutionMode.CONCURRENT)
 class KernelSessionInspectionTest {
     private final KernelService kernels = new KernelService();
     private final ObjectMapper mapper = new ObjectMapper();

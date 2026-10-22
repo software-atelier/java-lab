@@ -11,7 +11,8 @@ public final class CodeGeneration {
     private CodeGeneration() {}
     public record Target(String source, Integer start, Integer end) {}
     public record ContextItem(String kind, String title, String content, Map<String, Object> metadata) {}
-    public record Request(String prompt, Target target, List<ContextItem> context, String kernelId, String requestId) {
+    public record Request(String prompt, Target target, List<ContextItem> context, String kernelId, String requestId, String language) {
+        public Request(String prompt, Target target, List<ContextItem> context, String kernelId, String requestId) { this(prompt, target, context, kernelId, requestId, null); }
         public Request(String prompt, Target target, List<ContextItem> context) { this(prompt, target, context, null, null); }
         public Request(String prompt, Target target, List<ContextItem> context, String kernelId) { this(prompt, target, context, kernelId, null); }
     }

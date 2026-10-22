@@ -36,7 +36,7 @@ public class NotebookStore {
             Files.createDirectories(root);
             this.root = root.toRealPath();
         } catch (IOException e) { throw new IllegalStateException("Cannot create or access the configured data directory", e); }
-        this.values = new NotebookValues(mapper, this.root);
+        this.values = new NotebookValues(mapper);
     }
 
     public NotebookValues values() { return values; }
@@ -246,6 +246,25 @@ public class NotebookStore {
         return new FileEntry(name,relative(path),type,type.equals("text")?TextFileStore.format(name):null);
     }
     public FileEntry fileInfo(String path){return entry(existingFile(path));}
+    public synchronized FileEntry duplicateFile(String path) throws IOException {
+        Path source=existingFile(path);
+        String name=source.getFileName().toString(),base=name,suffix="";
+        int dot=name.lastIndexOf('.');
+        if(dot>0){base=name.substring(0,dot);suffix=name.substring(dot);}
+        for(int counter=0;;counter++){
+            String marker=counter==0?"-copy":"-copy-"+counter;
+            int maximumBase=255-marker.length()-suffix.length();
+            if(maximumBase<1)throw badRequest("Filename extension is too long to duplicate");
+            Path target=source.resolveSibling(base.substring(0,Math.min(base.length(),maximumBase))+marker+suffix);
+            try{Files.copy(source,target);return entry(target);}
+            catch(FileAlreadyExistsException e){/* Try the next name without replacing an existing entry. */}
+        }
+    }
+    public synchronized void deleteFile(String path) throws IOException {
+        Path file=existingFile(path);
+        Files.delete(file);
+        if(isNotebookName(file.getFileName().toString()))values.delete(file);
+    }
     public synchronized FileEntry createFile(String folder,String name,String extension) throws IOException {
         var supported=java.util.Set.of("csv","json","xml","txt","md","yaml","yml","java","sql","properties","log","css","js","html","htm");
         if(extension==null||!supported.contains(extension))throw badRequest("Choose a supported new file type");

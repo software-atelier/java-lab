@@ -14,6 +14,18 @@ test('JSON formatting preserves big numeric literals, duplicate keys, key order 
   assert.equal((formatted.match(/"z"/g)||[]).length,2);assert.ok(formatted.indexOf('"z"')<formatted.indexOf('"a"'));assert.equal(JSON.parse(formatted).message,'a, { "quote"');
   assert.throws(()=>editing.formatJson('{ invalid'));assert.throws(()=>editing.formatJson('['.repeat(101)+'0'+']'.repeat(101)),/deeply/);
 });
+test('YAML highlighting distinguishes keys, scalars, comments and literal blocks without changing source',()=>{
+  const text='---\nname: Ada\nactive: true\ncount: -12.5\nurl: https://example.org/a#part\nquote: "it\'s # literal" # comment\nmessage: |-\n  # not a comment\n  <script>alert(1)</script>\nnext: null\n';
+  const html=editing.highlight(text,'yaml');
+  assert.equal(unescape(html),text);assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/<span class="syntax-keyword">name<\/span>/);
+  assert.match(html,/<span class="syntax-keyword">true<\/span>/);
+  assert.match(html,/<span class="syntax-number">-12.5<\/span>/);
+  assert.match(html,/<span class="syntax-string">https:\/\/example.org\/a#part<\/span>/);
+  assert.match(html,/<span class="syntax-comment"># comment<\/span>/);
+  assert.match(html,/<span class="syntax-string">  # not a comment<\/span>/);
+  assert.equal(editing.highlight('x'.repeat(300001),'yaml'),'x'.repeat(300001));
+});
 test('editing assists indent, auto-indent and pair brackets without damaging ordinary backspace',()=>{
   assert.deepEqual(editing.assist('{}',1,1,'Enter'),{text:'{\n  \n}',start:4,end:4});
   assert.deepEqual(editing.assist('',0,0,'{'),{text:'{}',start:1,end:1});

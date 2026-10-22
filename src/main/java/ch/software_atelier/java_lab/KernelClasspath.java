@@ -22,8 +22,10 @@ final class KernelClasspath implements AutoCloseable {
                 copyClass(ch.software_atelier.java_lab.display.Grid.class);
                 copyClass(ch.software_atelier.java_lab.display.SessionInspector.class);
                 copyClass(ch.software_atelier.java_lab.data.Csv.class);
+                copyClass(ch.software_atelier.java_lab.data.Sql.class);
                 copyClass(ch.software_atelier.java_lab.data.XmlDocuments.class);
                 copyClass(ch.software_atelier.java_lab.display.Images.class);
+                copyClass(KernelResourceSampler.class);
                 copy("ch/software_atelier/java_lab/display/JsonOptions.class", directory.resolve("classes/ch/software_atelier/java_lab/display/JsonOptions.class"));
             }
             return directory.resolve("classes") + File.pathSeparator + LIBRARIES.stream().map(name->directory.resolve(name+".jar").toString()).collect(Collectors.joining(File.pathSeparator));

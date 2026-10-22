@@ -88,16 +88,42 @@ class NotebookFeaturesTest {
         }
     }
     @Test void resolvesTransitiveJarOnlyForNotebook() throws Exception {
+        // A private, offline repository keeps this integration test independent
+        // of Maven Central, user credentials and the user's persistent cache.
+        var repository=directory.resolve("repository");
+        var source=directory.resolve("fixture-source/test/fixture");
+        var classes=directory.resolve("fixture-classes");
+        java.nio.file.Files.createDirectories(source);
+        java.nio.file.Files.createDirectories(classes);
+        java.nio.file.Files.writeString(source.resolve("Child.java"),"package test.fixture; public class Child { public static String value() { return \"child\"; } }");
+        java.nio.file.Files.writeString(source.resolve("Parent.java"),"package test.fixture; public class Parent { public static String value() { return Child.value(); } }");
+        assertThat(javax.tools.ToolProvider.getSystemJavaCompiler().run(null,null,null,"-d",classes.toString(),source.resolve("Child.java").toString(),source.resolve("Parent.java").toString())).isZero();
+        for(String artifact:java.util.List.of("parent","child")){
+            var base=repository.resolve("test/fixture/"+artifact+"/1.0");
+            java.nio.file.Files.createDirectories(base);
+            String dependency=artifact.equals("parent")?"<dependencies><dependency><groupId>test.fixture</groupId><artifactId>child</artifactId><version>1.0</version></dependency></dependencies>":"";
+            java.nio.file.Files.writeString(base.resolve(artifact+"-1.0.pom"),"<project><modelVersion>4.0.0</modelVersion><groupId>test.fixture</groupId><artifactId>"+artifact+"</artifactId><version>1.0</version>"+dependency+"</project>");
+            String entry="test/fixture/"+(artifact.equals("parent")?"Parent":"Child")+".class";
+            try(var jar=new java.util.jar.JarOutputStream(java.nio.file.Files.newOutputStream(base.resolve(artifact+"-1.0.jar")))){
+                jar.putNextEntry(new java.util.jar.JarEntry(entry));
+                java.nio.file.Files.copy(classes.resolve(entry),jar);
+                jar.closeEntry();
+            }
+        }
+        var settings=directory.resolve("offline-settings.xml");
+        java.nio.file.Files.writeString(settings,"<settings><offline>true</offline></settings>");
         NotebookStore store = new NotebookStore(mapper,directory);
         String with=store.create("with"), without=store.create("without");
         var doc=store.read(with);
-        doc.withObject("metadata").withObject("java_lab").putArray("dependencies").add("org.apache.commons:commons-compress:1.27.1");
+        doc.withObject("metadata").withObject("java_lab").putArray("dependencies").add("test.fixture:parent:1.0");
         store.save(with,doc);
-        try(KernelService kernels=new KernelService(store)) {
+        try(KernelService kernels=new KernelService(store,new MavenDependencies(settings,directory.resolve("no-global-settings.xml"),repository))) {
             String a=kernels.create(with), b=kernels.create(without);
-            assertThat(kernels.execute(a,"new org.apache.commons.compress.archivers.tar.TarArchiveEntry(\"x\").getName()").success()).isTrue();
-            assertThat(kernels.execute(a,"new org.apache.commons.lang3.StringUtils() != null").success()).isTrue();
-            assertThat(kernels.execute(b,"new org.apache.commons.compress.archivers.tar.TarArchiveEntry(\"x\")").success()).isFalse();
+            var result=kernels.execute(a,"test.fixture.Parent.value()");
+            assertThat(result.success()).as(result.outputs().toString()).isTrue();
+            assertThat(result.outputs()).singleElement().satisfies(output->assertThat(output.get("data")).isEqualTo(java.util.Map.of("text/plain","\"child\"")));
+            assertThat(kernels.execute(a,"test.fixture.Child.value()").success()).isTrue();
+            assertThat(kernels.execute(b,"test.fixture.Parent.value()").success()).isFalse();
         }
     }
 }

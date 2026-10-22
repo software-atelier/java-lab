@@ -47,7 +47,7 @@ window.JavaEditor = (() => {
 
   async function request(editor, manual = false, fallback = null, refresh = false) {
     if (!editor.isConnected || !editor.closest('.code-editor') || editor.selectionStart!==editor.selectionEnd) return;
-    const n=active();if(!n || n.running)return;
+    const n=active();if(!n || !n.kernel || n.running)return;
     const value=editor.value, cursor=editor.selectionStart, kernel=n.kernel;
     if (refresh && completion?.editor===editor) { clearTimeout(timer); generation++; } // Refresh keeps the open popup visible.
     else dismiss();
@@ -64,7 +64,7 @@ window.JavaEditor = (() => {
   }
 
   async function inspect(editor) {
-    const n=active();if(!n||n.running)return;
+    const n=active();if(!n||!n.kernel||n.running)return;
     const value=editor.value,cursor=editor.selectionStart;dismiss();const version=generation;
     try {
       const result=await api(`/kernels/${n.kernel}/inspect`,'POST',{code:value,cursor});

@@ -13,6 +13,84 @@ class CodeGenerationServiceTest {
     private final CodeGenerationProvider provider = mock(CodeGenerationProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
 
+    @Test void javaEditsExposeDatabaseReadsWithoutRequiringAKernelOrOpenApiTools() {
+        var database = mock(ch.software_atelier.java_lab.DatabaseReadTools.class);
+        when(database.definitions()).thenReturn(List.of(Map.of("function", Map.of("name", "read_database"))));
+        var service = new CodeGenerationService(provider, List.of(), mapper);
+        service.setDatabaseTools(database);
+        when(provider.generate(anyList(), any(), any(CodeGeneration.Observer.class), any())).thenAnswer(invocation -> {
+            List<CodeGeneration.Message> messages = invocation.getArgument(0);
+            assertThat(messages.get(0).content()).contains("read_database", "jdbcUrl", "never invent credentials");
+            CodeGeneration.Tools tools = invocation.getArgument(1);
+            assertThat(tools.definitions()).hasSize(1);
+            tools.execute("read_database", mapper.createObjectNode().put("query", "select 1"));
+            return new CodeGeneration.Result("int answer = 1;", "test");
+        });
+        service.generate(new CodeGeneration.Request("Read database", new CodeGeneration.Target("", null, null), null));
+        verify(database).execute(eq("read_database"), any());
+    }
+
+    @Test void javaEditsCombineOpenApiWorkspaceAndKernelToolsAndRouteCalls() {
+        var sessions = mock(SessionTools.class);
+        var session = mock(CodeGeneration.Tools.class);
+        var workspace = mock(ch.software_atelier.java_lab.WorkspaceReadTools.class);
+        var openApi = mock(ch.software_atelier.java_lab.OpenApiTools.class);
+        var specification = mock(CodeGeneration.Tools.class);
+        String kernel = "12345678-1234-1234-1234-123456789012";
+        when(sessions.forKernel(kernel)).thenReturn(session);
+        when(openApi.forRequest()).thenReturn(specification);
+        when(session.definitions()).thenReturn(List.of(Map.of("function", Map.of("name", "session_overview"))));
+        when(workspace.definitions()).thenReturn(List.of(Map.of("function", Map.of("name", "list_workspace_files"))));
+        when(specification.definitions()).thenReturn(List.of(Map.of("function", Map.of("name", "read_openapi_spec"))));
+        var service = new CodeGenerationService(provider, List.of(), mapper, sessions);
+        service.setWorkspaceTools(workspace);
+        service.setOpenApiTools(openApi);
+        when(provider.generate(anyList(), any(), any(CodeGeneration.Observer.class), any())).thenAnswer(invocation -> {
+            List<CodeGeneration.Message> messages = invocation.getArgument(0);
+            assertThat(messages.get(0).content()).contains("read_openapi_spec", "external", "credentials");
+            CodeGeneration.Tools combined = invocation.getArgument(1);
+            assertThat(combined.definitions()).hasSize(3);
+            var args = mapper.createObjectNode().put("source", "api.yaml");
+            combined.execute("session_overview", args);
+            combined.execute("list_workspace_files", args);
+            combined.execute("read_openapi_spec", args);
+            assertThat(mapper.valueToTree(combined.execute("unknown", args)).has("error")).isTrue();
+            return new CodeGeneration.Result("int answer = 42;", "test");
+        });
+        assertThat(service.generate(new CodeGeneration.Request("Implement api.yaml", new CodeGeneration.Target("", null, null), null, kernel)).code()).contains("42");
+        verify(session).execute(eq("session_overview"), any());
+        verify(workspace).execute(eq("list_workspace_files"), any());
+        verify(specification).execute(eq("read_openapi_spec"), any());
+    }
+
+    @Test void structuredEditsUseWorkspaceToolsAndTextGenerationInsteadOfJavaValidation() {
+        var workspace = mock(ch.software_atelier.java_lab.WorkspaceReadTools.class);
+        var service = new CodeGenerationService(provider, List.of(), mapper);
+        service.setWorkspaceTools(workspace);
+        when(provider.generateText(anyList(), same(workspace), any())).thenReturn(new CodeGeneration.Result("{\"value\":42}", "test"));
+        for (String language : List.of("json", "xml", "yaml")) {
+            assertThat(service.generate(new CodeGeneration.Request("Convert source.csv", new CodeGeneration.Target("", null, null), null, null, null, language)).code()).contains("42");
+        }
+        verify(provider, never()).generate(anyList(), any(), any(CodeGeneration.Observer.class), any());
+    }
+
+    @Test void textAndMarkdownUseTheSameContextProvidersAndSessionToolsAsCode() {
+        var sessions = mock(SessionTools.class);
+        var tools = mock(CodeGeneration.Tools.class);
+        String kernel = "12345678-1234-1234-1234-123456789012";
+        when(sessions.forKernel(kernel)).thenReturn(tools);
+        when(provider.generateText(anyList(), same(tools), any())).thenReturn(new CodeGeneration.Result("# Results", "test"));
+        var custom = (AiContextProvider) request -> List.of(new CodeGeneration.ContextItem("reference", "Shared context", "Session facts", Map.of()));
+        var service = new CodeGenerationService(provider, List.of(custom), mapper, sessions);
+        for (String language : List.of("text", "markdown")) {
+            assertThat(service.generate(new CodeGeneration.Request("Summarize", new CodeGeneration.Target("", null, null), null, kernel, null, language)).code()).isEqualTo("# Results");
+        }
+        @SuppressWarnings("unchecked") var messages = (org.mockito.ArgumentCaptor<List<CodeGeneration.Message>>) (Object) org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(provider, times(2)).generateText(messages.capture(), same(tools), any());
+        assertThat(messages.getValue().get(1).content()).contains("Session facts");
+        verify(sessions, times(2)).forKernel(kernel);
+    }
+
     @Test void combinesExtensibleContextAndExactSelectionWithoutLosingMetadata() throws Exception {
         var custom = (AiContextProvider) request -> List.of(new CodeGeneration.ContextItem("reference", "API contract", "Use sample()", Map.of("path", "api.txt")));
         var service = new CodeGenerationService(provider, List.of(new JavaRuntimeContext(), new ChartContext(), new EChartsContext(), new GridContext(), new DataFormatsContext(), custom), mapper);

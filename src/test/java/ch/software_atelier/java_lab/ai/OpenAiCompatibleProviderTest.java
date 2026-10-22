@@ -67,7 +67,43 @@ class OpenAiCompatibleProviderTest {
         assertThat(received.path("max_tokens").asInt()).isEqualTo(8192);
         assertThat(path).isEqualTo("/api/v1/chat/completions");
         assertThat(titleHeader).isNull();
+        assertThat(received.has("provider")).isFalse();
         assertThat(provider("test-secret").name()).isEqualTo("OpenAI-compatible API");
+    }
+
+    @Test void openRouterSortsProvidersByThroughputByDefaultAndSupportsOverrides() throws Exception {
+        body = response("int answer = 42;", "stop");
+        for (String sort : new String[]{null, "", "throughput", "latency", "price", "default"}) {
+            var properties = new AiProperties("key", "test/model", null, Duration.ofSeconds(2), 8192, true, 16, 64, sort);
+            var router = new OpenAiCompatibleProvider(properties);
+            // Keep real OpenRouter detection, but redirect HTTP traffic to the local test server.
+            org.springframework.test.util.ReflectionTestUtils.setField(router, "endpoint",
+                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1/chat/completions"));
+            router.generate(messages());
+            assertThat(titleHeader).isEqualTo("Java Lab");
+            if ("default".equals(sort)) assertThat(received.has("provider")).isFalse();
+            else assertThat(received.path("provider").path("sort").asText())
+                .isEqualTo(sort == null || sort.isEmpty() ? "throughput" : sort);
+        }
+        assertThatThrownBy(() -> new AiProperties("key", "model", null, Duration.ofSeconds(2), 8192, true, 16, 64, "fastest"))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("AI_OPENROUTER_PROVIDER_SORT");
+    }
+
+    @Test void sqlGenerationNormalizesSqlWithoutJavaParsingAndRejectsTruncatedDrafts() throws Exception {
+        body = response("```sql\nSELECT name FROM people WHERE active = TRUE;\n```", "stop");
+        assertThat(provider("key").generateSql(messages(), null).code()).isEqualTo("SELECT name FROM people WHERE active = TRUE;");
+        body = response("SELECT name FROM", "length");
+        assertThatThrownBy(() -> provider("key").generateSql(messages(), null)).isInstanceOf(ResponseStatusException.class).hasMessageContaining("truncated");
+    }
+
+    @Test void textGenerationPreservesWhitespaceAndMarkdownFencesWithoutJavaValidation() throws Exception {
+        for (String replacement : List.of("  <root/>\n", "{\"answer\":42}\n", "answer: 42\n", "```java\nint answer = 42;\n```\n")) {
+            body = response(replacement, "stop");
+            assertThat(provider("key").generateText(messages(), null, activity -> {}).code()).isEqualTo(replacement);
+        }
+        body = response("incomplete text", "length");
+        assertThatThrownBy(() -> provider("key").generateText(messages(), null, activity -> {}))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("truncated");
     }
 
     @Test void missingConfigurationDoesNotMakeARequest() {

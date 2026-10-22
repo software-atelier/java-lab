@@ -8,6 +8,12 @@ const state = { files: [], folders: [], folder: '', notebooks: [], tabs: [], act
 const folderQuery = folder => '?folder=' + encodeURIComponent(folder || '');
 const notebookPath = (folder, name) => folder ? folder + '/' + name : name;
 let toastTimer;
+let loadingCount=0;
+async function withLoading(label,operation){
+  loadingCount++;$('#loading-label').textContent=label;$('#loading-overlay').hidden=false;
+  try{return await operation();}
+  finally{loadingCount=Math.max(0,loadingCount-1);if(!loadingCount)$('#loading-overlay').hidden=true;}
+}
 
 async function api(path, method = 'GET', body, options = {}) {
   const response = await fetch('api' + path, { ...options, method, headers: body === undefined ? {} : {'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -73,6 +79,9 @@ function openDocuments() { return state.tabs ?? state.notebooks; }
 function activeDocument() { return state.launcher ? null : state.active; }
 function active() { const doc=activeDocument();return ['csv','text','image'].includes(doc?.type)?null:doc; }
 async function openFile(name,folder=state.folder,type,select=true) {
+  return withLoading('Opening '+name+'…',()=>openFileContent(name,folder,type,select));
+}
+async function openFileContent(name,folder=state.folder,type,select=true) {
   if(type==='image'||/\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(name))return window.ImageViewer?.open(name,folder,select);
   if(type==='csv'||/\.csv$/i.test(name))return window.CsvEditor?.open(name,folder,select);
   if(type==='text'||/\.(json|xml|txt|md|yaml|yml|java|sql|properties|log|css|js|html|htm)$/i.test(name))return window.TextEditor?.open(name,folder,select);
@@ -131,7 +140,18 @@ function renderTabs() {
   renderKernels();
 }
 function renderKernels() {
-  $('#kernel-list').innerHTML = state.notebooks.length ? state.notebooks.map(n => `<div class="kernel-row">${icon('terminal')}<span title="${escapeHtml(n.name)}">${escapeHtml(n.name)}<br><small>${n.running ? 'Busy' : 'Idle'} · Java</small></span><button class="icon-button" data-close="${n.uid}" title="Close notebook and shut down kernel">${icon('close')}</button></div>`).join('') : '<div class="empty-files">No running kernels.</div>';
+  $('#kernel-list').innerHTML = state.notebooks.length ? state.notebooks.map(n => {
+    const disabled=n.kernelStarting||n.fileOperation||n.configPending;
+    const control=(action,label,symbol,blocked=false)=>`<button class="icon-button" data-kernel-action="${action}" data-kernel-notebook="${n.uid}" title="${label}" aria-label="${label} · ${escapeHtml(n.name)}" ${blocked?'disabled':''}>${icon(symbol)}</button>`;
+    return `<div class="kernel-row ${active()===n?'active':''}"><button class="kernel-open" data-tab="${n.uid}" title="Open ${escapeHtml(n.path)}">${icon('terminal')}<span class="kernel-summary"><span class="kernel-name">${escapeHtml(n.name)}</span><small>${n.kernelStopping ? 'Stopping' : n.kernelStarting ? 'Starting' : !n.kernel ? 'Stopped' : n.running ? 'Busy' : 'Idle'} · Java</small><small data-kernel-timing="${n.uid}" ${n.executingCell?'':'hidden'}>${kernelTiming(n)}</small><small class="kernel-resources" data-kernel-resources="${n.uid}" ${n.kernel&&!n.kernelStarting?'':'hidden'}>Reading resources…</small></span></button><div class="kernel-actions">${n.running?control('interrupt','Interrupt kernel','stop',disabled||n.cancelRun):control(n.kernel?'restart':'start',n.kernel?'Restart kernel':'Start kernel',n.kernel?'refresh':'play',disabled)}${control('shutdown','Shut down kernel (keep tab open)','close',disabled||n.running||!n.kernel)}</div></div>`;
+  }).join('') : '<div class="empty-files">No open notebooks.</div>';
+  window.KernelResources?.refresh();
+}
+function kernelTiming(n) {
+  if(!n.executingCell)return '';
+  const seconds=Math.floor((Date.now()-n.cellStartedAt)/1000);
+  const elapsed=seconds<60?`${seconds}s`:`${Math.floor(seconds/60)}m ${seconds%60}s`;
+  return `Cell ${n.document.cells.indexOf(n.executingCell)+1} · ${elapsed}`;
 }
 
 async function openNotebook(name, folder = state.folder, select = true) {
@@ -141,15 +161,15 @@ async function openNotebook(name, folder = state.folder, select = true) {
     if (!state.opening.has(path)) {
       state.opening.set(path, (async () => {
         const document = await api('/notebooks/' + encodeURIComponent(name) + folderQuery(folder));
-        let kernel=null,kernelError=null;
-        try{kernel=await api('/kernels', 'POST', {notebook:path});}
-        catch(e){kernelError=e;}
-        // Preserve notebook metadata and standard output objects on round trip.
-        const opened = {uid:crypto.randomUUID(), name, folder, path, document, kernel:kernel?.id||null, configPending:!!kernelError, selected:0, dirty:false, revision:0, running:false, timer:null};
+         // Preserve notebook metadata and standard output objects on round trip.
+         const opened = {uid:crypto.randomUUID(), name, folder, path, document, kernel:null, kernelStarting:true, configPending:false, selected:0, dirty:false, revision:0, running:false, timer:null};
         state.notebooks.push(opened);
         if(state.tabs)state.tabs.push(opened);
         hydrateFormValues(opened);
-        if(kernelError)notify('Kernel could not start: '+kernelError.message+'. Open Settings to fix libraries or values.',true);
+         // Display saved cells immediately; starting JShell (and resolving libraries) can take seconds.
+         opened.kernelPromise = api('/kernels', 'POST', {notebook:path}).then(kernel=>{opened.kernel=kernel.id;})
+           .catch(error=>{opened.configPending=true;notify('Kernel could not start: '+error.message+'. Open Settings to fix libraries or values.',true);})
+           .finally(()=>{opened.kernelStarting=false;renderKernels();updateStatus();});
         return opened;
       })());
     }
@@ -182,10 +202,10 @@ function updateStatus() {
   const n = active(),doc=activeDocument(),csv=doc?.type==='csv'?doc:null,text=doc?.type==='text'?doc:null,image=doc?.type==='image'?doc:null;
   const marked=n?window.NotebookControls?.indexes(n).length||1:0;
   $('#cell-position').textContent = n ? `Cell ${n.document.cells.length ? n.selected+1 : 0} of ${n.document.cells.length}${marked>1?' · '+marked+' selected':''}` : '';
-  $('#kernel-status').textContent = text ? `${text.format.toUpperCase()} · No kernel` : csv ? 'CSV · No kernel' : n ? `Java · ${!n.kernel ? 'Not started' : n.running ? 'Busy' : 'Idle'}` : 'Java · JShell';
-  $('#status-message').textContent = n ? (n.configPending ? 'Settings need Apply before running' : n.running ? 'Running cells…' : n.staleCells?.size ? 'Some outputs are stale · run following cells' : n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Data directory';
+   $('#kernel-status').textContent = text ? `${text.format.toUpperCase()} · No kernel` : csv ? 'CSV · No kernel' : n ? `Java · ${n.kernelStopping ? 'Stopping' : n.kernelStarting ? 'Starting' : !n.kernel ? 'Stopped' : n.running ? 'Busy' : 'Idle'}` : 'Java · JShell';
+   $('#status-message').textContent = n ? (n.kernelStopping ? 'Shutting down Java kernel…' : n.kernelStarting ? 'Starting Java kernel… · Cells are ready to edit' : n.configPending ? 'Settings need Apply before running' : !n.kernel ? 'Kernel stopped · run a cell to start a fresh session' : n.running ? 'Running cells…' : n.staleCells?.size ? 'Some outputs are stale · run following cells' : n.dirty ? 'Unsaved changes' : 'All changes saved') : 'Data directory';
   $('#save-state').innerHTML = n?.saving ? 'Saving…' : n?.dirty ? 'Unsaved' : icon('check')+' Saved';
-  $('#kernel-dot').classList.toggle('busy', !!n?.running);
+   $('#kernel-dot').classList.toggle('busy', !!n?.running || !!n?.kernelStarting);
   $('#cell-type').value = n?.document.cells[n.selected]?.cell_type || 'code';
   $('#cell-type').disabled=!n;
   if(csv){$('#cell-position').textContent=`${csv.table.rows.length} records`;$('#status-message').textContent=csv.busy?'Working with CSV…':csv.error?'CSV needs attention':csv.dirty?'Unsaved CSV changes':'All changes saved';}
@@ -194,10 +214,10 @@ function updateStatus() {
   $$('[data-action="rename"]').forEach(b=>b.disabled=!doc||!!doc.busy||!!doc.running);
   $$('[data-action="save"]').forEach(b=>b.disabled=!doc||doc.type==='image'||!!doc.fileOperation);
   for(const action of ['settings','export-html','download']) $$(`[data-action="${action}"]`).forEach(b=>b.disabled=!n||!!n.fileOperation);
-  for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running || n.configPending || !n.kernel || !!n.fileOperation);
-  for (const action of ['restart','restart-run-all']) $$(`[data-action="${action}"]`).forEach(b=>b.disabled=!n || n.running || n.configPending || !!n.fileOperation);
+   for (const action of ['run','run-next','run-all']) $$(`[data-action="${action}"]`).forEach(b => b.disabled = !n || n.running || n.kernelStarting || n.configPending || !!n.fileOperation);
+   for (const action of ['restart','restart-run-all']) $$(`[data-action="${action}"]`).forEach(b=>b.disabled=!n || n.kernelStarting || n.running || n.configPending || !!n.fileOperation);
   $$('[data-action="interrupt"]').forEach(b => b.disabled = !n?.running);
-  $$('[data-action="vibecode"]').forEach(b => b.disabled = !n || n.running || n.document.cells[n.selected]?.cell_type !== 'code');
+  $$('[data-action="vibecode"]').forEach(b => b.disabled = !n || n.running || !n.document.cells[n.selected]);
 }
 function markDirty(n) {
   n.dirty = true; n.revision++; clearTimeout(n.timer);
@@ -259,9 +279,13 @@ function renderCells() {
     const outputs=(c.outputs||[]).map(o=>outputHtml(o,formValues(n))).join('');
     const hidden=!!c.metadata?.jupyter?.outputs_hidden;
     const heading=window.NotebookModel?.heading(c);
-    return `<article class="cell ${index === n.selected ? 'selected' : ''} ${n.staleCells?.has(c.id) && outputs ? 'stale-output' : ''}" data-cell="${index}" tabindex="${index===n.selected?0:-1}"><div class="cell-actions">${heading?'<button class="icon-button" data-cell-action="heading" title="Collapse or expand heading">'+(c.metadata.java_lab?.heading_collapsed?'›':'⌄')+'</button>':''}${c.cell_type === 'code' ? `<button class="icon-button vibe-cell-button" data-cell-action="vibecode" title="AI edit this cell or selected text">✦ Vibecode</button>${window.Vibecode?.canUndo(c) ? '<button class="icon-button vibe-cell-button" data-cell-action="undo-ai" title="Undo the last AI edit">Undo AI edit</button>' : ''}` : ''}${c.cell_type === 'markdown' ? `<button class="icon-button preview-toggle" data-cell-action="preview" title="Toggle Markdown editing and preview">${rendered ? 'Edit & preview' : 'Done'}</button>` : ''}<button class="icon-button" data-cell-action="run" title="Run cell">${icon('play')}</button><button class="icon-button" data-cell-action="up" title="Move up">${icon('up')}</button><button class="icon-button" data-cell-action="down" title="Move down">${icon('down')}</button><button class="icon-button" data-cell-action="delete" title="Delete cell">${icon('trash')}</button></div><div class="cell-input-row"><div class="cell-prompt">${c.cell_type === 'code' ? 'In ['+(c.busy ? '*' : c.execution_count ?? ' ')+']:' : ''}</div>${input}</div>${hidden&&outputs?'<button class="show-outputs" data-action="toggle-outputs">Show hidden outputs</button>':''}<div class="cell-outputs ${c.metadata?.scrolled?'output-scrolled':''}" ${hidden?'hidden':''}>${outputs}</div></article>`;
+    return `<article class="cell ${index === n.selected ? 'selected' : ''} ${n.staleCells?.has(c.id) && outputs ? 'stale-output' : ''}" data-cell="${index}" tabindex="${index===n.selected?0:-1}"><div class="cell-actions">${heading?'<button class="icon-button" data-cell-action="heading" title="Collapse or expand heading">'+(c.metadata.java_lab?.heading_collapsed?'›':'⌄')+'</button>':''}<button class="icon-button vibe-cell-button" data-cell-action="vibecode" title="AI edit this cell or selected text">✦ AI</button>${window.Vibecode?.canUndo(c) ? '<button class="icon-button vibe-cell-button" data-cell-action="undo-ai" title="Undo the last AI edit">Undo AI edit</button>' : ''}${c.cell_type === 'markdown' ? `<button class="icon-button preview-toggle" data-cell-action="preview" title="Toggle Markdown editing and preview">${rendered ? 'Edit & preview' : 'Done'}</button>` : ''}<button class="icon-button" data-cell-action="run" title="Run cell">${icon('play')}</button><button class="icon-button" data-cell-action="up" title="Move up">${icon('up')}</button><button class="icon-button" data-cell-action="down" title="Move down">${icon('down')}</button><button class="icon-button" data-cell-action="delete" title="Delete cell">${icon('trash')}</button></div><div class="cell-input-row"><div class="cell-prompt">${c.cell_type === 'code' ? 'In ['+(c.busy ? '*' : c.execution_count ?? ' ')+']:' : ''}</div>${input}</div>${hidden&&outputs?'<button class="show-outputs" data-action="toggle-outputs">Show hidden outputs</button>':''}<div class="cell-outputs ${c.metadata?.scrolled?'output-scrolled':''}" ${hidden?'hidden':''}>${outputs}</div></article>`;
   }).join('');
-  $$('#cells textarea').forEach(sizeEditor);
+   // Batch layout writes and reads instead of forcing one layout per cell.
+   const editors=$$('#cells textarea');
+   editors.forEach(editor=>{editor.style.height='0px';});
+   const heights=editors.map(editor=>Math.max(46,editor.scrollHeight));
+   editors.forEach((editor,index)=>{editor.style.height=heights[index]+'px';});
   window.NotebookControls?.decorate(n);
   window.NotebookCharts?.mount($('#cells'));
   window.NotebookTables?.mount($('#cells'));
@@ -334,7 +358,9 @@ function insertCell(index, type = 'code', text = '') {
 async function evaluateCell(n, c) {
   if (c.cell_type === 'markdown') { delete c.editing; if(active()===n) renderCells(); return true; }
   if (c.cell_type !== 'code') return true;
-  c.busy = true; if (active()===n) renderCells();
+  c.busy = true;n.executingCell=c;n.cellStartedAt=Date.now();renderKernels();
+  const timing=setInterval(()=>{const label=$(`[data-kernel-timing="${n.uid}"]`);if(label)label.textContent=kernelTiming(n);},1000);
+  if (active()===n) renderCells();
   try {
     const code=source(c);n.executionHistory ||= [];if(n.executionHistory.at(-1)!==code)n.executionHistory.push(code);if(n.executionHistory.length>100)n.executionHistory.shift();n.historyBrowse=null;
     const values=formValues(n);
@@ -342,11 +368,14 @@ async function evaluateCell(n, c) {
     const result = await api(`/kernels/${n.kernel}/execute`, 'POST', {code,formValues:values});
     c.execution_count = result.executionCount; c.outputs = result.outputs; hydrateFormValues(n); clearStaleThrough(n,n.document.cells.indexOf(c)); markDirty(n);
     return result.success;
-  } finally { delete c.busy; if(active()===n) renderCells(); }
+  } finally { clearInterval(timing);delete n.executingCell;delete n.cellStartedAt;delete c.busy;renderKernels();if(active()===n) renderCells(); }
 }
 async function runSelected(next = false, insert = false) {
-  const n = active(); if (!n || n.running || !n.document.cells.length) return;
-  if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+   const n = active(); if (!n || n.running || !n.document.cells.length) return;
+   if(n.kernelStarting){notify('Java kernel is still starting. Please try again shortly.');return;}
+   if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+   if(n.fileOperation)return;
+   if(!n.kernel)await startKernel(n);
   if(!validVisibleForms())return;
   const indices=window.NotebookControls?.indexes(n)||[n.selected],index=indices.at(-1),mode=n.controls?.mode||'command';
   const cursor=$(`#cells [data-cell="${n.selected}"] textarea`)?.selectionStart??0;
@@ -359,8 +388,11 @@ async function runSelected(next = false, insert = false) {
   }else if(active()===n&&window.NotebookControls){if(mode==='edit'&&n.controls?.mode==='edit')NotebookControls.edit(n,cursor);else NotebookControls.command(n);}
 }
 async function runAll(start = 0, target = active()) {
-  const n = target; if (!n || n.running) return;
-  if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+   const n = target; if (!n || n.running) return;
+   if(n.kernelStarting){notify('Java kernel is still starting. Please try again shortly.');return;}
+   if (n.configPending) { notify('Apply notebook settings before running cells.', true); return; }
+   if(n.fileOperation)return;
+   if(!n.kernel)await startKernel(n);
   if(!validVisibleForms())return;
   n.running = true; n.cancelRun = false; updateStatus(); renderKernels();
   try { for (const c of n.document.cells.slice(start)) {
@@ -384,20 +416,54 @@ async function applyFormAndRun(button) {
   if(index+1 >= n.document.cells.length){notify('Values applied. Add a following cell to use them.');return;}
   await runAll(index+1,n);
 }
-async function restartKernel(runAfter = false) {
-  const n = active(); if (!n) return;
+async function startKernel(n) {
+  if(n.kernelStarting)return n.kernelPromise;
+  if(n.running||n.fileOperation)throw new Error('Wait for execution or file operations to finish.');
+  if(n.configPending)throw new Error('Apply notebook settings before starting the kernel.');
+  n.kernelStarting=true;renderKernels();updateStatus();
+  n.kernelPromise=(async()=>{
+    if(n.dirty||n.savePromise)await saveNotebook(n);
+    const replacement=await api('/kernels','POST',{notebook:n.path});
+    const old=n.kernel;n.kernel=replacement.id;
+    n.staleCells=new Set(n.document.cells.filter(c=>c.outputs?.length).map(c=>c.id));
+    if(old)api(`/kernels/${old}`,'DELETE').catch(e=>notify('Old kernel cleanup failed: '+e.message,true));
+  })().finally(()=>{n.kernelStarting=false;renderKernels();updateStatus();if(active()===n)renderCells();});
+  return n.kernelPromise;
+}
+async function interruptKernel(n=active()) {
+  if(!n?.running||!n.kernel)return;
+  n.cancelRun=true;renderKernels();
+  try {await api(`/kernels/${n.kernel}/interrupt`,'POST');notify('Interrupt requested');}
+  catch(e){n.cancelRun=false;renderKernels();throw e;}
+}
+async function shutdownKernel(n) {
+  if(!n?.kernel||n.kernelStarting)return;
+  if(n.running)throw new Error('Interrupt execution before shutting down the kernel.');
+  if(n.fileOperation)throw new Error('Wait for the file operation to finish.');
+  if(!await modal('Shut down kernel?',`The Java session for <strong>${escapeHtml(n.name)}</strong> will be reset. The notebook tab, cells, and outputs will stay open.`,'Shut down'))return;
+  if(n.running||n.kernelStarting||n.fileOperation)throw new Error('Kernel state changed. Try again when it is idle.');
+  n.kernelStarting=true;n.kernelStopping=true;renderKernels();updateStatus();
+  n.kernelPromise=(async()=>{
+    await api(`/kernels/${n.kernel}`,'DELETE');n.kernel=null;
+    n.staleCells=new Set(n.document.cells.filter(c=>c.outputs?.length).map(c=>c.id));
+    notify('Kernel shut down · run a cell to start a fresh session');
+  })().finally(()=>{n.kernelStarting=false;delete n.kernelStopping;renderKernels();updateStatus();if(active()===n)renderCells();});
+  return n.kernelPromise;
+}
+async function restartKernel(runAfter = false, n = active()) {
+   if (!n) return;
+   if(n.kernelStarting){notify('Java kernel is still starting. Please try again shortly.');return;}
   if(n.configPending)throw new Error('Apply notebook settings before restarting the kernel.');
   if (!await modal(runAfter ? 'Restart kernel & run all?' : 'Restart kernel?', 'All Java variables, imports, and definitions in this session will be reset. Your cells and outputs will remain.', runAfter ? 'Restart & run all' : 'Restart')) return;
   if(n.running)throw new Error('Interrupt execution before restarting the kernel.');
-  if(n.dirty || n.savePromise)await saveNotebook(n);
-  n.cancelRun=true;const replacement=await api('/kernels','POST',{notebook:n.path});
-  const old=n.kernel;n.kernel=replacement.id;n.configPending=false;
-  api(`/kernels/${old}`, 'DELETE').catch(e=>notify('Old kernel cleanup failed: '+e.message,true));
-  n.staleCells=new Set(n.document.cells.filter(c=>c.outputs?.length).map(c=>c.id));notify('Kernel restarted · fresh Java session'); updateStatus();renderCells();
+  if(n.kernelStarting)return;
+  await startKernel(n);
+  notify('Kernel restarted · fresh Java session');
   if(runAfter)await runAll(0,n);
 }
 async function closeNotebook(n) {
-  if (!n) return;
+   if (!n) return;
+   if(n.kernelStarting){try{await n.kernelPromise;}catch(_){/* A failed lifecycle request still allows closing the tab. */}}
   if(n.fileOperation)throw new Error('Wait for the file operation to finish before closing.');
   if (n.running) { notify('Interrupt execution before closing the notebook.',true); return; }
   if (n.dirty || n.savePromise) await saveNotebook(n);
@@ -422,18 +488,21 @@ function modal(title, body, confirm = 'Continue', initial = null) {
   });
 }
 async function newNotebook(example = false) {
+  return withLoading(example?'Creating introduction…':'Creating notebook…',async()=>{
   const result = await api('/notebooks'+folderQuery(state.folder),'POST', {name:example ? 'Getting started.jnb' : undefined});
   await openNotebook(result.name);
   if (example) {
     const n = active(); n.document.cells = window.gettingStartedCells(cell); markDirty(n); renderCells(); await runAll(); await saveNotebook(n);
   }
   await refreshFiles();
+  });
 }
 async function newFile(extension){
   const folder=state.folder;
   const name=await modal('New '+extension.toUpperCase()+' file','Choose a filename. The file is created in the current data folder.','Create','Untitled.'+extension);
-  if(!name)return;const created=await api('/files','POST',{folder,name,extension});
+  if(!name)return;return withLoading('Creating '+name+'…',async()=>{const created=await api('/files','POST',{folder,name,extension});
   await refreshFiles();await openFile(created.name,folder,created.type);
+  });
 }
 async function newFileByName(){
   const name=await modal('New data/text file','Enter a filename with a supported extension, such as report.json, notes.txt or query.sql. Use Upload file for images.','Create file','untitled.txt');
@@ -441,8 +510,9 @@ async function newFileByName(){
   const extension=name.slice(name.lastIndexOf('.')+1).toLowerCase();
   const extensions=new Set(['csv','json','xml','txt','md','yaml','yml','java','sql','properties','log','css','js','html','htm']);
   if(!extensions.has(extension))throw new Error('Choose a supported text/source extension, or use Upload file.');
-  const folder=state.folder,created=await api('/files','POST',{folder,name,extension});
+  const folder=state.folder;return withLoading('Creating '+name+'…',async()=>{const created=await api('/files','POST',{folder,name,extension});
   await refreshFiles();await openFile(created.name,folder,created.type);
+  });
 }
 async function newFolder() {
   const name=await modal('New folder','Choose a folder name. Folders can contain notebooks and data files.','Create folder','New folder');
@@ -489,8 +559,9 @@ async function renameFile(name=activeDocument()?.name,folder=activeDocument()?.f
   if(value&&value!==name)await renameFileTo(name,folder,value);
 }
 async function renameFileTo(name,folder,newName){
-  const path=notebookPath(folder,name),doc=openDocuments().find(item=>item.path===path);
-  if(doc){
+   const path=notebookPath(folder,name),doc=openDocuments().find(item=>item.path===path);
+   if(doc){
+     if(doc.kernelStarting)await doc.kernelPromise;
     if(doc.running||doc.busy)throw new Error('Wait for execution or file operations to finish before renaming.');
     if(doc.type==='csv'||doc.type==='text'){if(!await saveDocument(doc,false))throw new Error('Save the file before renaming it.');}
     else if(doc.type!=='image')await saveNotebook(doc);
@@ -513,6 +584,20 @@ async function renameFileTo(name,folder,newName){
     }
   }
   await refreshFiles();renderWorkspace();notify('File renamed');
+  }finally{if(doc){setFileOperation(doc,false);if(doc.document&&doc.dirty)markDirty(doc);}}
+}
+async function duplicateFile(name,folder=state.folder){
+  const path=notebookPath(folder,name),doc=openDocuments().find(item=>item.path===path);
+  if(doc){
+    if(doc.running||doc.busy)throw new Error('Wait for execution or file operations to finish before duplicating.');
+    if(doc.type==='csv'||doc.type==='text'){if(!await saveDocument(doc,false))throw new Error('Save the file before duplicating it.');}
+    else if(doc.type!=='image')await saveNotebook(doc);
+  }
+  if(doc)setFileOperation(doc,true);
+  try{
+    const result=await api('/files/duplicate','POST',{path});
+    await refreshFiles();notify(`Created ${result.name}`);
+    return result;
   }finally{if(doc){setFileOperation(doc,false);if(doc.document&&doc.dirty)markDirty(doc);}}
 }
 function setFileOperation(doc,value){
@@ -538,8 +623,9 @@ function finishNotebookTitle(commit=true) {
 }
 async function moveFile(name,sourceFolder,targetFolder) {
   if(targetFolder===sourceFolder)return;
-  const sourcePath=notebookPath(sourceFolder,name),n=openDocuments().find(open=>open.path===sourcePath);
-  if(n){
+   const sourcePath=notebookPath(sourceFolder,name),n=openDocuments().find(open=>open.path===sourcePath);
+   if(n){
+     if(n.kernelStarting)await n.kernelPromise;
     if(n.busy)throw new Error('Wait for the file operation to finish before moving it.');
     if(['csv','text'].includes(n.type)){const editor=n.type==='csv'?window.CsvEditor:window.TextEditor;if(n.busy||!await editor.save(n))throw new Error(`Save the ${n.type==='csv'?'CSV':'file'} before moving it.`);}
     else if(n.type!=='image'){if(n.running)throw new Error('Interrupt execution before moving this notebook.');await saveNotebook(n);}
@@ -556,6 +642,23 @@ async function deleteNotebook(name, folder = state.folder) {
   const n = state.notebooks.find(n => n.path === notebookPath(folder,name)); if(n) {if(n.running) throw new Error('Interrupt execution before deleting this notebook.'); await closeNotebook(n);}
   await api('/notebooks/'+encodeURIComponent(name)+folderQuery(folder),'DELETE'); await refreshFiles(); notify('Notebook deleted');
 }
+async function deleteFile(name, folder = state.folder) {
+  const path=notebookPath(folder,name);
+  if(!await modal('Delete file?',`<strong>${escapeHtml(path)}</strong> will be permanently deleted from the data directory. Unsaved changes will be discarded.`,'Delete'))return;
+  const doc=openDocuments().find(item=>item.path===path);
+  if(doc?.busy||doc?.savePromise)throw new Error('Wait for file operations to finish before deleting this file.');
+  if(doc)setFileOperation(doc,true);
+  try{
+    await api('/files?path='+encodeURIComponent(path),'DELETE');
+    if(doc){
+      window.NotebookControls?.closed(doc);
+      state.tabs=openDocuments().filter(item=>item!==doc);
+      if(state.active===doc){state.active=openDocuments().at(-1)||null;state.launcher=!state.active;}
+      renderWorkspace();
+    }
+    await refreshFiles();notify('File deleted');
+  }finally{if(doc)setFileOperation(doc,false);}
+}
 function help(topic='overview') { return window.LabHelp?.open(topic); }
 const actions = {
   new: () => newNotebook(), example: () => newNotebook(true), refresh:refreshFiles,
@@ -568,11 +671,12 @@ const actions = {
     const sidebar = $('#sidebar');
     if (innerWidth <= 760) {sidebar.hidden=false;sidebar.classList.toggle('revealed');}
     else sidebar.hidden = !sidebar.hidden;
+    window.KernelResources?.refresh();
   },
   save: () => saveDocument(), rename: () => renameFile(), close: () => closeDocument(),
   settings: () => window.NotebookSettings?.open(active()),
   run: () => runSelected(), 'run-next': () => runSelected(true), 'run-all':()=>runAll(), restart:()=>restartKernel(), 'restart-run-all':()=>restartKernel(true),
-  interrupt: async () => {const n=active();if(n?.running){n.cancelRun=true;await api(`/kernels/${n.kernel}/interrupt`,'POST');notify('Interrupt requested');}},
+  interrupt: () => interruptKernel(),
   add: () => insertCell((active()?.selected ?? -1)+1), 'add-end': () => insertCell(active()?.document.cells.length || 0),
   duplicate: () => {const n=active();if(n && !n.running && n.document.cells[n.selected]){const copy=structuredClone(n.document.cells[n.selected]);copy.id=crypto.randomUUID();delete copy.busy;n.document.cells.splice(n.selected+1,0,copy);n.selected++;markDirty(n);renderCells();}},
   'delete-cell': () => {const n=active();if(n && !n.running){n.document.cells.splice(n.selected,1);n.selected=Math.max(0,Math.min(n.selected,n.document.cells.length-1));markDirty(n);renderCells();}},
@@ -598,6 +702,11 @@ document.addEventListener('click', async event => {
   $('.file-context')?.remove();
   const formAction=target.closest('[data-form-action]');if(formAction){try{await applyFormAndRun(formAction);}catch(e){notify(e.message,true);}return;}
   const action = target.closest('[data-action]'); if(action){dispatch(action.dataset.action);return;}
+  const kernelAction=target.closest('[data-kernel-action]');if(kernelAction){
+    if(kernelAction.disabled)return;
+    const n=state.notebooks.find(n=>n.uid===kernelAction.dataset.kernelNotebook);
+    if(n)try{const action=kernelAction.dataset.kernelAction;if(action==='interrupt')await interruptKernel(n);else if(action==='restart')await restartKernel(false,n);else if(action==='start')await startKernel(n);else if(action==='shutdown')await shutdownKernel(n);}catch(e){notify(e.message,true);}return;
+  }
   const close = target.closest('[data-close]'); if(close){try{const doc=openDocuments().find(n=>n.uid===close.dataset.close);if(doc)await closeDocument(doc);}catch(e){notify(e.message,true);}return;}
   const folder = target.closest('[data-folder]'); if(folder){state.folder=folder.dataset.folder;await refreshFiles();return;}
   if(target.closest('[data-parent-folder]')){state.folder=state.folder.split('/').slice(0,-1).join('/');await refreshFiles();return;}
@@ -605,7 +714,7 @@ document.addEventListener('click', async event => {
     await openFile(file.dataset.file,file.dataset.fileFolder || '',file.dataset.fileType);
   }catch(e){notify(e.message,true);}return;}
   const tab = target.closest('[data-tab]'); if(tab){const doc=openDocuments().find(n=>n.uid===tab.dataset.tab);if(doc){state.active=doc;state.launcher=false;renderWorkspace();}return;}
-  const panel = target.closest('[data-panel]'); if(panel){const type=panel.dataset.panel;const sidebar=$('#sidebar');sidebar.hidden=false;if(innerWidth<=760)sidebar.classList.toggle('revealed',state.panel!==type||!sidebar.classList.contains('revealed'));state.panel=type;$('#files-panel').hidden=type!=='files';$('#running-panel').hidden=type!=='running';$('#panel-title').textContent=type==='files'?'FILE BROWSER':'RUNNING KERNELS';$$('[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===type));return;}
+  const panel = target.closest('[data-panel]'); if(panel){const type=panel.dataset.panel;const sidebar=$('#sidebar');sidebar.hidden=false;if(innerWidth<=760)sidebar.classList.toggle('revealed',state.panel!==type||!sidebar.classList.contains('revealed'));state.panel=type;$('#files-panel').hidden=type!=='files';$('#running-panel').hidden=type!=='running';$('#panel-title').textContent=type==='files'?'FILE BROWSER':'RUNNING KERNELS';$$('[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===type));renderKernels();return;}
   const element = target.closest('[data-cell]');
   if(element) {
     if(target.closest('.lab-form'))return;
@@ -693,11 +802,11 @@ $('#file-list').addEventListener('contextmenu',event=>{
   if(folder){event.preventDefault();$('.file-context')?.remove();const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button type="button">Delete empty folder</button>';document.body.append(menu);menu.addEventListener('click',()=>{menu.remove();deleteFolder(folder.dataset.folder).catch(e=>notify(e.message,true));});return;}
   const file=event.target.closest('[data-file]');if(!file)return;event.preventDefault();$('.file-context')?.remove();
   if(file.dataset.fileType!=='notebook'){
-    const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button type="button" data-context="rename">Rename file</button><button type="button" data-context="download">Download file</button>';document.body.append(menu);
-    menu.addEventListener('click',event=>{const action=event.target.closest('button')?.dataset.context;menu.remove();if(action==='rename')renameFile(file.dataset.file,file.dataset.fileFolder||'').catch(e=>notify(e.message,true));else if(action==='download')downloadWorkspaceFile(file.dataset.file,file.dataset.fileFolder||'');});return;
+    const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-170)+'px';menu.innerHTML='<button type="button" data-context="rename">Rename file</button><button type="button" data-context="duplicate">Duplicate file</button><button type="button" data-context="download">Download file</button><button type="button" data-context="delete">Delete file</button>';document.body.append(menu);
+    menu.addEventListener('click',event=>{const action=event.target.closest('button')?.dataset.context;menu.remove();if(action==='rename')renameFile(file.dataset.file,file.dataset.fileFolder||'').catch(e=>notify(e.message,true));else if(action==='duplicate')duplicateFile(file.dataset.file,file.dataset.fileFolder||'').catch(e=>notify(e.message,true));else if(action==='download')downloadWorkspaceFile(file.dataset.file,file.dataset.fileFolder||'');else if(action==='delete')deleteFile(file.dataset.file,file.dataset.fileFolder||'').catch(e=>notify(e.message,true));});return;
   }
-  const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-160)+'px';menu.style.top=Math.min(event.clientY,innerHeight-100)+'px';menu.innerHTML='<button data-context="rename">Rename notebook</button><button data-context="delete">Delete notebook</button>';document.body.append(menu);
-  menu.addEventListener('click',event=>{const action=event.target.dataset.context;menu.remove();(action==='rename'?renameNotebook(file.dataset.file,file.dataset.fileFolder):deleteNotebook(file.dataset.file,file.dataset.fileFolder)).catch(e=>notify(e.message,true));});
+  const menu=document.createElement('div');menu.className='file-context';menu.style.left=Math.min(event.clientX,innerWidth-170)+'px';menu.style.top=Math.min(event.clientY,innerHeight-130)+'px';menu.innerHTML='<button data-context="rename">Rename notebook</button><button data-context="duplicate">Duplicate notebook</button><button data-context="delete">Delete notebook</button>';document.body.append(menu);
+  menu.addEventListener('click',event=>{const action=event.target.closest('button')?.dataset.context;menu.remove();const handler=action==='rename'?renameNotebook:action==='duplicate'?duplicateFile:action==='delete'?deleteNotebook:null;if(handler)handler(file.dataset.file,file.dataset.fileFolder).catch(e=>notify(e.message,true));});
 });
 window.addEventListener('beforeunload',event=>{if(openDocuments().some(n=>n.dirty||n.running)){event.preventDefault();event.returnValue='';}});
 window.addEventListener('pagehide',()=>{for(const n of state.notebooks){if(n.kernel)fetch(`api/kernels/${n.kernel}`,{method:'DELETE',keepalive:true}).catch(()=>{});}});

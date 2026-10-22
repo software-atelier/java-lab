@@ -78,8 +78,9 @@
   function reset() {
     variableList.replaceChildren();dependencyList.replaceChildren();error.hidden=true;error.textContent='';status=new Map();notebook=null;applying=false;
   }
-  async function open(n) {
-    if(!n)return;
+   async function open(n) {
+     if(!n)return;
+     if(n.kernelStarting)await n.kernelPromise;
     if(n.running)throw new Error('Interrupt execution before editing notebook settings.');
     reset();notebook=n;initialPending=!!n.configPending;
     const settings=installedSettings(n.document);

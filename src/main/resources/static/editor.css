@@ -84,14 +84,22 @@
 .vibe-error { margin-top: 13px; padding: 10px 12px; border-radius: 5px; background: #fff3f1; color: #af6056; font-size: 11px; line-height: 1.7; }
 .vibe-progress { position: relative; width: fit-content; color: #9560ad; font-size: 11px; margin-top: 14px; }
 .vibe-progress-trigger { border: 0; padding: 2px 0; background: transparent; color: inherit; font: inherit; cursor: help; text-decoration: underline dotted; text-underline-offset: 4px; animation: pulse 2s infinite; }
-.vibe-progress-popup { position: absolute; bottom: calc(100% - 1px); left: 0; z-index: 20; box-sizing: border-box; width: min(480px, calc(100vw - 90px)); max-height: min(65vh, 460px); overflow: auto; padding: 14px; border: 1px solid #d9c9df; border-radius: 7px; background: #fff; color: #596274; box-shadow: 0 8px 28px #24203824; visibility: hidden; opacity: 0; pointer-events: none; }
+.vibe-progress-popup { position: absolute; bottom: calc(100% - 1px); left: 0; z-index: 20; box-sizing: border-box; width: min(380px, calc(100vw - 90px)); max-height: min(55vh, 360px); overflow: auto; padding: 0; border: 1px solid #d9c9df; border-radius: 8px; background: #fff; color: #596274; font: 11px/1.5 var(--sans); text-align: left; box-shadow: 0 8px 28px #24203824; visibility: hidden; opacity: 0; pointer-events: none; overscroll-behavior: contain; }
 .vibe-progress:hover .vibe-progress-popup, .vibe-progress:focus-within .vibe-progress-popup { visibility: visible; opacity: 1; pointer-events: auto; }
-.vibe-progress-popup strong { display: block; color: #82548f; margin-bottom: 8px; }
-#vibe-progress-activity { line-height: 1.5; overflow-wrap: anywhere; }
-#vibe-progress-log, #vibe-progress-diagnostics, #vibe-diagnostics-text { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0; font: 10px/1.6 var(--mono); }
-#vibe-progress-diagnostics { border-top: 1px solid var(--border); padding-top: 8px; }
+.vibe-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 12px 0; }
+.vibe-progress-heading strong { color: #82548f; font-size: 11px; font-weight: 600; }
+#vibe-progress-elapsed { color: #8e98a6; font: 10px var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#vibe-progress-activity { padding: 6px 12px 12px; overflow-wrap: anywhere; }
+.vibe-progress-details { border-top: 1px solid #edf0f3; }
+.vibe-progress-details summary { padding: 8px 12px; color: #637084; cursor: pointer; font-size: 10px; }
+.vibe-progress-details summary:hover { background: #f8f9fb; }
+.vibe-progress-details summary:focus-visible { outline: 2px solid #b39ac1; outline-offset: -2px; }
+.vibe-progress-details summary span { margin-left: 4px; color: #8e98a6; font-variant-numeric: tabular-nums; }
+#vibe-progress-log, #vibe-progress-diagnostics, #vibe-diagnostics-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.6 var(--mono); }
+#vibe-progress-log, #vibe-progress-diagnostics { margin: 0; padding: 2px 12px 12px; }
+#vibe-diagnostics-text { max-height: 180px; overflow: auto; margin: 10px 0; }
 .vibe-diagnostics { margin-top: 12px; color: #637084; font-size: 11px; }
 .vibe-diagnostics summary { cursor: pointer; }
-.vibe-progress-popup small { color: #8e98a6; font-size: 10px; }
+.vibe-progress-footer { padding: 8px 12px; border-top: 1px solid #edf0f3; background: #fafbfc; color: #8e98a6; font-size: 9px; }
 .vibe-note { color: #a3acb7; font-size: 10px; margin-top: 17px; }
 @media(max-width:900px) { .notebook-toolbar { gap: 5px; } .vibe-button { font-size: 10px; padding: 4px; } }

@@ -13,11 +13,27 @@ function harness(rows=[['id','notes'],['001','value']],options={}){
       value:'',hidden:false,disabled:false,textContent:'',innerHTML:'',open:false,handlers:{},scrollTop:0,scrollLeft:0,
       addEventListener(name,fn){this.handlers[name]=fn;},querySelector:s=>element(s),querySelectorAll:()=>[...nodes.values()],
       showModal(){this.open=true;},close(){this.open=false;},focus(){document.activeElement=this;},
+      select(){this.selectionStart=0;this.selectionEnd=this.value.length;},
       setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}
     });
     return nodes.get(selector);
   }
-  const window={addEventListener(name,fn){this[name]=fn;}};
+  const grids=[];
+  class Grid{
+    constructor(config){this.config=config;this.handlers={};grids.push(this);}
+    on(name,fn){this.handlers[name]=fn;return this;}
+    render(host){
+      this.host=host;
+      const {columns,data,language}=this.config;
+      host.innerHTML=`<table><thead><tr>${columns.map(col=>`<th>${col.name}</th>`).join('')}</tr></thead><tbody>${data.length?data.map(values=>{
+        const row={cells:values.map(data=>({data}))};
+        return `<tr>${columns.map((col,index)=>`<td>${col.formatter?col.formatter(values[index],row):values[index]}</td>`).join('')}</tr>`;
+      }).join(''):`<tr><td>${language.noRecordsFound}</td></tr>`}</tbody></table>`;
+      this.handlers.ready?.();return this;
+    }
+    destroy(){this.destroyed=true;this.host.innerHTML='';}
+  }
+  const window={gridjs:{Grid,html:value=>value},addEventListener(name,fn){this[name]=fn;}};
   const context={window,$:element,structuredClone,state,document,crypto:{randomUUID:()=>`csv-${++uid}`},
     openDocuments:()=>state.tabs,activeDocument:()=>state.launcher?null:state.active,
     renderTabs(){},updateStatus(){},
@@ -37,7 +53,7 @@ function harness(rows=[['id','notes'],['001','value']],options={}){
     },refreshFiles:async()=>{},notify(){},modal:async()=>allowDiscard};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../main/resources/static/csv-editor.js'),'utf8'),context);
   function click(selector,dataset){return element('#csv-editor').handlers.click({target:{closest:s=>s===selector?{dataset}:null}});}
-  return {element,calls,window,state,document,open:(name='sales.csv',folder='Data')=>window.CsvEditor.open(name,folder),
+  return {element,calls,window,state,document,grids,open:(name='sales.csv',folder='Data')=>window.CsvEditor.open(name,folder),
     select(doc){state.active=doc;state.launcher=false;context.renderWorkspace();},
     launcher(){state.launcher=true;context.renderWorkspace();},
     input(row,col,value){const target={dataset:{csvRow:String(row),csvCol:String(col)},value};element('#csv-grid').handlers.input({target});return target;},
@@ -67,6 +83,20 @@ test('editable CSV escapes values and saves exact text and format without starti
   assert.ok(h.calls.every(c=>c.url.startsWith('/csv?path=Data%2Fsales.csv')));
 });
 
+test('Grid.js instances are disposed on page and tab changes and empty states remain editable',async()=>{
+  const h=harness([]);await h.open();
+  assert.match(h.element('#csv-grid').innerHTML,/Empty CSV/);
+  const initial=h.grids.at(-1);
+  h.action('add-row');assert.equal(initial.destroyed,true);
+  assert.match(h.element('#csv-grid').innerHTML,/data-csv-row="0"/);
+  const active=h.grids.at(-1);
+  h.launcher();assert.equal(active.destroyed,true);
+  await h.open();assert.notStrictEqual(h.grids.at(-1),active);
+  h.element('#csv-find').handlers.input({target:{value:'missing'}});
+  assert.match(h.element('#csv-grid').innerHTML,/No records match/);
+  assert.equal(h.state.active.table.rows.length,1);
+});
+
 test('edits across pages and record/column operations preserve the full table',async()=>{
   const rows=Array.from({length:52},(_,i)=>[String(i).padStart(3,'0'),'text']);
   const h=harness(rows);await h.open();
@@ -81,6 +111,24 @@ test('edits across pages and record/column operations preserve the full table',a
   assert.equal(saved[49][0],'edited on page two');
   assert.equal(saved[0].length,2);
   assert.equal(saved[51].length,2);
+});
+
+test('CSV search spans pages, keeps original row identities, and clears the filter when closed',async()=>{
+  const h=harness(Array.from({length:110},(_,i)=>[String(i),i%2?'match':'other']));await h.open();
+  h.element('#csv-editor').handlers.keydown({ctrlKey:true,key:'f',preventDefault(){},stopPropagation(){}});
+  assert.equal(h.element('#csv-search').hidden,false);
+  h.element('#csv-find').handlers.input({target:{value:'MATCH'}});
+  assert.match(h.element('#csv-page').textContent,/55 matching records/);
+  assert.match(h.element('#csv-grid').innerHTML,/data-csv-row="1"/);
+  assert.doesNotMatch(h.element('#csv-grid').innerHTML,/data-csv-row="0"/);
+  h.action('next');assert.match(h.element('#csv-grid').innerHTML,/data-csv-row="101"/);
+  h.input(101,1,'edited match');assert.equal(h.state.active.table.rows[101][1],'edited match');
+  h.removeRow(103);assert.equal(h.state.active.table.rows[103][0],'104');
+  await h.open('second.csv');assert.equal(h.element('#csv-search').hidden,true);assert.equal(h.element('#csv-find').value,'');
+  await h.open();assert.equal(h.element('#csv-search').hidden,false);assert.equal(h.element('#csv-find').value,'MATCH');
+  h.element('#csv-find-close').onclick();assert.equal(h.element('#csv-search').hidden,true);
+  assert.equal(h.state.active.search,'');assert.match(h.element('#csv-grid').innerHTML,/data-csv-row="0"/);
+  await h.save();assert.equal(h.calls.find(c=>c.method==='PUT').body.table.rows.length,109);
 });
 
 test('save conflicts keep edits and closing or reloading requires discarding unsaved changes',async()=>{

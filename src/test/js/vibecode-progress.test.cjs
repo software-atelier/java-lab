@@ -44,7 +44,10 @@ test('live progress uses the generation ID, updates safe text, and stops polling
   assert.equal(h.element('#vibe-progress').hidden,false);
   await h.tick();
   assert.match(h.element('#vibe-progress-activity').textContent,/Inspecting variable: customers/);
-  assert.match(h.element('#vibe-progress-log').textContent,/Elapsed: 2s\n\n1s · Inspecting/);
+  assert.equal(h.element('#vibe-progress-elapsed').textContent,'Elapsed: 2s');
+  assert.match(h.element('#vibe-progress-log').textContent,/1s · Inspecting/);
+  assert.equal(h.element('#vibe-progress-event-count').textContent,'(1)');
+  assert.equal(h.element('#vibe-progress-history').open,false);
   const poll=h.calls.find(c=>c.endpoint.startsWith('/ai/progress/'));
   assert.equal(poll.options.cache,'no-store');
   assert.equal(h.timers.size,1);
@@ -121,6 +124,9 @@ test('popup displays reported model, limit, finish reason and token usage with e
   assert.match(text,/Finish reason: not reported/);
   assert.match(text,/Output tokens: not reported/);
   assert.equal(h.element('#vibe-progress-diagnostics').hidden,false);
+  assert.equal(h.element('#vibe-progress-model-details').hidden,false);
+  assert.equal(h.element('#vibe-progress-model-details').open,false);
+  assert.equal(h.element('#vibe-progress-request-count').textContent,'(2 requests)');
   h.finish({code:'int done = 3;',diagnostics:[diagnostic]});await pending;
 });
 

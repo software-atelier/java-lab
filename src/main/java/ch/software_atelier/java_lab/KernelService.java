@@ -26,21 +26,35 @@ import java.util.jar.JarFile;
 public class KernelService implements AutoCloseable {
     private final Map<String, Kernel> kernels = new ConcurrentHashMap<>();
     private final KernelClasspath classpath = new KernelClasspath();
-    private final MavenDependencies dependencies = new MavenDependencies();
+    private final MavenDependencies dependencies;
     private final NotebookStore notebooks;
-    public KernelService() { this.notebooks = null; }
+    private final SqlKernelBridge sqlBridge;
+    public KernelService() { this(null, new MavenDependencies()); }
     @org.springframework.beans.factory.annotation.Autowired
-    public KernelService(NotebookStore notebooks) { this.notebooks = notebooks; }
+    public KernelService(NotebookStore notebooks, SqlService sql) { this(notebooks, new MavenDependencies(), sql); }
+    public KernelService(NotebookStore notebooks) { this(notebooks, new MavenDependencies()); }
+    KernelService(NotebookStore notebooks, MavenDependencies dependencies) {
+        this(notebooks, dependencies, notebooks == null ? null : new SqlService(notebooks, new ObjectMapper()));
+    }
+    KernelService(NotebookStore notebooks, MavenDependencies dependencies, SqlService sql) {
+        this.notebooks = notebooks;
+        this.dependencies = dependencies;
+        this.sqlBridge = new SqlKernelBridge(sql);
+    }
     private final ScheduledExecutorService interrupts=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"java-lab-interrupt");t.setDaemon(true);return t;});
     public record Result(int executionCount, List<Map<String, Object>> outputs, boolean success) {}
     public record Suggestion(String text, boolean matchesType) {}
     public record Completions(int anchor, List<Suggestion> suggestions) {}
     public record Inspection(List<String> signatures) {}
+    public record Resources(boolean available, long pid, long sampledAt, long heapUsedBytes, long heapCommittedBytes, long heapMaxBytes, Double cpuPercent) {}
+
+    /** Reads a background sample without evaluating snippets or extending the session's idle lifetime. */
+    public Resources resources(String id) { return get(id).resources(); }
 
     public String create() {
         if (kernels.size() >= 32) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many kernels; close unused notebooks");
         String id = UUID.randomUUID().toString();
-        kernels.put(id, new Kernel(classpath.resolve(), Map.of(), Set.of(), dataDirectory()));
+        kernels.put(id, new Kernel(classpath.resolve(), Map.of(), Set.of(), dataDirectory(), sqlBridge.endpoint()));
         return id;
     }
 
@@ -53,7 +67,7 @@ public class KernelService implements AutoCloseable {
         List<Path> jars = dependencies.resolve(settings.dependencies());
         String cp = classpath.resolve() + jars.stream().map(path -> File.pathSeparator + path).collect(java.util.stream.Collectors.joining());
         Set<String> secrets = settings.variables().stream().filter(NotebookSettings.Variable::secret).map(v -> values.get(v.name())).filter(v -> v != null && !v.isEmpty()).collect(java.util.stream.Collectors.toSet());
-        Kernel kernel = new Kernel(cp, values, secrets, dataDirectory());
+        Kernel kernel = new Kernel(cp, values, secrets, dataDirectory(), sqlBridge.endpoint());
         kernel.dependencies = List.copyOf(settings.dependencies());
         String id = UUID.randomUUID().toString();
         kernels.put(id, kernel);
@@ -202,7 +216,7 @@ public class KernelService implements AutoCloseable {
         long cutoff = System.currentTimeMillis() - Duration.ofMinutes(60).toMillis();
         kernels.forEach((id, kernel) -> { if (!kernel.busy.get() && kernel.lastUsed < cutoff) remove(id); });
     }
-    @PreDestroy public void close() { kernels.keySet().forEach(this::remove); interrupts.shutdownNow();classpath.close(); }
+    @PreDestroy public void close() { kernels.keySet().forEach(this::remove); interrupts.shutdownNow();sqlBridge.close();classpath.close(); }
 
     private static Map<String, Object> error(String name, String message) {
         return Map.of("output_type", "error", "ename", name, "evalue", message, "traceback", List.of(name + ": " + message));
@@ -224,13 +238,17 @@ public class KernelService implements AutoCloseable {
         volatile int count;
         volatile long generation;
         volatile boolean closed;
+        Path resourceDirectory;
+        final Object resourceLock = new Object();
+        long previousResourceTime, previousCpuNanos = -1;
+        Double cpuPercent;
 
-        Kernel(String classpath, Map<String,String> variables, Set<String> secrets, Path dataDirectory) {
+        Kernel(String classpath, Map<String,String> variables, Set<String> secrets, Path dataDirectory, String sqlEndpoint) {
             this.classpath = classpath;
             secretValues = secrets.stream().sorted(Comparator.comparingInt(String::length).reversed()).toList();
             shell = JShell.builder().out(new PrintStream(stdout, true, StandardCharsets.UTF_8))
                 .err(new PrintStream(stderr, true, StandardCharsets.UTF_8))
-                .remoteVMOptions("-Djava.awt.headless=true", "\"-Duser.dir=" + dataDirectory.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"").build();
+                .remoteVMOptions("-Djava.awt.headless=true", "-Djava.lab.sql.endpoint=" + sqlEndpoint, "\"-Duser.dir=" + dataDirectory.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"").build();
             shell.addToClasspath(classpath);
             shell.eval("import java.util.*;");
             shell.eval("import java.util.stream.*;");
@@ -250,6 +268,7 @@ public class KernelService implements AutoCloseable {
             shell.eval("import org.json.*;");
             shell.eval("import org.apache.commons.csv.*;");
             shell.eval("import ch.software_atelier.java_lab.data.Csv;");
+            shell.eval("import ch.software_atelier.java_lab.data.Sql;");
             shell.eval("import org.apache.commons.io.input.BOMInputStream;");
             shell.eval("void log(String msg, Object... args) { ch.software_atelier.java_lab.display.Logs.log(msg, args); }");
             shell.eval("java.util.Map<String,String> __labVars = new java.util.HashMap<>();");
@@ -261,6 +280,30 @@ public class KernelService implements AutoCloseable {
             }
             shell.eval("String labVar(String name) { return __labVars.get(name); }");
             shell.eval("String requireLabVar(String name) { String value = __labVars.get(name); if (value == null) throw new IllegalArgumentException(\"Missing notebook variable: \" + name); return value; }");
+            try {
+                resourceDirectory = java.nio.file.Files.createTempDirectory("java-lab-resources-");
+                String encoded = Base64.getEncoder().encodeToString(resourceDirectory.toString().getBytes(StandardCharsets.UTF_8));
+                shell.eval("ch.software_atelier.java_lab.KernelResourceSampler.start(\"" + encoded + "\");");
+            } catch (IOException ignored) { /* Resource monitoring is optional. */ }
+        }
+
+        Resources resources() {
+            synchronized (resourceLock) {
+                if (!closed && resourceDirectory != null) {
+                    try (var input = new DataInputStream(java.nio.file.Files.newInputStream(resourceDirectory.resolve("sample")))) {
+                        long pid=input.readLong(), time=input.readLong(), used=input.readLong(), committed=input.readLong(), max=input.readLong(), cpu=input.readLong();
+                        if (System.currentTimeMillis()-time <= 10_000 && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) {
+                            if (time > previousResourceTime) {
+                                cpuPercent = previousResourceTime > 0 && cpu >= previousCpuNanos && previousCpuNanos >= 0
+                                    ? 100.0 * (cpu-previousCpuNanos) / ((time-previousResourceTime)*1_000_000.0) : null;
+                                previousResourceTime=time;previousCpuNanos=cpu;
+                            }
+                            return new Resources(true,pid,time,used,committed,max,cpuPercent);
+                        }
+                    } catch (IOException | RuntimeException ignored) { /* Missing, incomplete, or expired sample. */ }
+                }
+                return new Resources(false,0,0,0,0,0,null);
+            }
         }
 
         Object inspectSession(String operation, com.fasterxml.jackson.databind.JsonNode args) throws IOException {
@@ -562,7 +605,18 @@ public class KernelService implements AutoCloseable {
                 }
             }
         }
-        void close() { closed=true;shell.stop(); shell.close(); executor.shutdownNow(); }
+        void close() {
+            closed=true;
+            try { shell.stop(); shell.close(); }
+            finally {
+                executor.shutdownNow();
+                if(resourceDirectory!=null)try {
+                    java.nio.file.Files.deleteIfExists(resourceDirectory.resolve("sample"));
+                    java.nio.file.Files.deleteIfExists(resourceDirectory.resolve("sample.tmp"));
+                    java.nio.file.Files.deleteIfExists(resourceDirectory);
+                } catch(IOException ignored) { resourceDirectory.toFile().deleteOnExit(); }
+            }
+        }
     }
 
     private static final class LimitedOutput extends ByteArrayOutputStream {

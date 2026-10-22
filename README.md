@@ -61,9 +61,10 @@ Set variables in the process launching Java Lab, then restart it. Command-line S
 | `AI_API_KEY` | Empty | Provider token; required for OpenRouter/authenticated providers. |
 | `AI_MODEL` | Empty | Provider model ID; required to use Vibecode. |
 | `AI_API_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible base URL or complete `/chat/completions` endpoint. |
+| `AI_OPENROUTER_PROVIDER_SORT` | `throughput` | OpenRouter provider priority: `throughput`, `latency`, `price`, or `default` (normal OpenRouter routing). |
 | `AI_TIMEOUT` | `300s` | Overall model/tool/validation/correction timeout; durations such as `10m` are accepted. |
 | `AI_MAX_TOKENS` | `128000` | Requested output ceiling per model response, subject to provider/model limits. |
-| `AI_TOOLS_ENABLED` | `true` | Enable live Java session and library inspection. |
+| `AI_TOOLS_ENABLED` | `true` | Enable read-only inspection tools, including Java sessions, workspace files and OpenAPI specifications. |
 | `AI_MAX_TOOL_ROUNDS` | `16` | Maximum inspection rounds; range 1–64. |
 | `AI_MAX_TOOL_CALLS` | `64` | Maximum attempted inspection calls; range 1–256. |
 | `JAVA_HOME` | Launcher dependent | Used by Maven/Java launch scripts; ensure `java` on `PATH` is the intended full JDK 17+. |
@@ -89,7 +90,7 @@ Notebook environment bindings may refer to any additional variable names you cho
 - **Bundled data libraries:** org.json **20260814** and Apache Commons CSV **1.14.1**, including its Commons IO and Commons Codec dependencies, available directly in notebook kernels and documented in Vibecode context.
 - **Notebook variables and credentials:** define names, optional shareable defaults, and environment-variable bindings per notebook; keep personal values outside the `.jnb` file.
 - **Notebook libraries:** add Maven coordinates to a notebook; Java Lab downloads their transitive runtime dependencies and makes them available only to that notebook's kernel.
-- **Vibecode:** describe an AI edit for a whole Java cell or selected text using any OpenAI-compatible API; OpenRouter is the default. Optional preceding-cell context and additional notes help the model use your notebook definitions. Applied edits autosave and have a cell-level undo action.
+- **Vibecode:** describe an AI edit for a whole Java, Markdown or raw text cell, or selected text, using any OpenAI-compatible API; OpenRouter is the default. These cell types share notebook settings, optional preceding cells/outputs and live session inspection tools. Applied edits autosave and have a cell-level undo action. JSON, XML and YAML file editors also offer AI edits with read-only workspace file tools for data conversion.
 - **Persistent sessions:** variables, methods, classes, and imports carry across cells. Each open notebook gets an independent JShell kernel in a separate JVM.
 - **Outputs:** the result of the last statement is displayed automatically. Intermediate values stay quiet; charts and tables use their rich renderers. `log(...)`, console streams, compilation diagnostics, and runtime errors are also displayed.
 - **Inline charts:** bundled JFreeChart 1.5.6 renders PNG charts, and Apache ECharts 6.0.0 renders interactive browser charts. Both persist with notebooks and are included in standalone HTML exports.
@@ -98,9 +99,74 @@ Notebook environment bindings may refer to any additional variable names you cho
 - **Editing:** insert, duplicate, reorder, delete, change cell type, and clear outputs. Double-click rendered Markdown to edit it.
 - **Files:** all visible regular files appear in the File Browser with file-type icons. Notebooks and CSVs use their specialized tabs; JSON, XML, TXT and common source/text formats open in a highlighted text editor. Images open preview tabs with copyable embedding examples; other types download. Rename any file with F2, its File Browser/tab context menu, a tab-name double-click, or its editor title. Drag files onto another folder (or `..`) to move them; open editable files are saved first. Uploads open the matching editor/preview.
 - **Create files:** the launcher's **START SOMETHING NEW** includes notebooks, CSV, JSON, XML, TXT, YAML and SQL files, plus image upload and the introduction notebook. Choose a filename in the current browser folder; names receive numeric suffixes on collision. JSON/XML/CSV receive valid starter contents; other text files start empty.
+- **SQL files:** configure a JDBC Maven package, URL and local credentials, execute selected SQL or the whole file, inspect tabular results below the editor, and export CSV directly into the File Browser.
 - **Beautiful HTML export:** **Export HTML** in the toolbar or **File → Export as HTML** downloads a standalone document with a styled cover, Markdown, syntax-highlighted Java, line numbers, and saved outputs. All styling is embedded; the exported file opens offline without the server. Responsive and print-friendly layouts are included.
 - **Autosave:** saves 1.2 seconds after an edit, with explicit save available. Changes, notes, and outputs persist to disk using atomic replacement where supported.
 - **Getting started:** the introduction launcher card creates and runs a sample notebook covering logging, Java state, formatted output, an interactive form, JSON/CSV, JFreeChart, Apache ECharts, and Grid.js. Click **A quick introduction** to create a fresh copy of the latest version.
+
+### SQL files and JDBC connections
+
+1. Create or open a `.sql` file and choose the **Connection settings** (gear) button at the top right of its code block.
+2. Enter JDBC Maven coordinates (`groupId:artifactId:version`), a JDBC URL, user and password. For example, PostgreSQL uses `org.postgresql:postgresql:42.7.8` and `jdbc:postgresql://localhost:5432/database`. Driver dependencies are downloaded using the same Maven settings, mirrors and cache as notebook libraries.
+3. Choose **Save connection & file**. Package, URL and a credential reference are written into a leading `-- java-lab-sql: {...}` comment. This metadata is hidden from the editor, its line numbers and searches. User and password are stored separately under `~/.java-lab/sql-credentials/`, with owner-only directory/file permissions on POSIX systems. The password is never returned to the browser. Leave the password field empty to retain it, or select **Clear stored password** to remove it. Keep credentials out of the JDBC URL.
+4. Select a statement and click **Run SQL**, or press **Ctrl / Cmd + Enter**. Without a selection, the current file draft is executed. Each run opens a new connection; multi-statement support follows the JDBC driver. Update statements display affected-row counts. Tables appear below the editor with 200 rows per page; SQL `NULL` is shown explicitly.
+5. Choose **Export CSV to file browser** on a result table. The displayed result snapshot, including column headers and all its pages, is saved as `<sql-name>-result.csv` in the SQL file's folder. Existing files receive numeric suffixes. Export does not execute the query again.
+
+Results are limited to 10,000 rows per table (explicitly marked when truncated), 4 million characters across values and 50 results per execution. A 60-second statement timeout is requested from the driver. The server retains the 10 most recent successful result snapshots; rerun an expired result before exporting it. Results are not saved inside the SQL file. Moving or renaming a SQL file preserves its credential reference; sharing the file shares connection metadata, while credentials must be configured locally on the receiving machine.
+
+### Load SQL results in Java notebooks
+
+The pre-imported **`Sql`** helper executes a saved SQL file using the JDBC package, URL and credential reference in its leading `-- java-lab-sql: {...}` comment. Local user/password values are resolved by Java Lab, and the driver is downloaded automatically. Save the SQL file and connection settings first.
+
+```java
+var result = Sql.load("queries/sales.sql");
+var records = result.records();
+Grid.table().columns(result.columns()).rows(result.rows()).show();
+```
+
+- `Sql.load(String)` / `Sql.load(Path)` return an immutable `Sql.Result`. Paths are visible workspace-relative `.sql` paths, relative to the configured data root, including for notebooks in subfolders.
+- `result.tables()` returns all `Sql.Table` results; `result.updateCounts()` returns affected-row counts. `result.table()` requires exactly one table. `columns()`, `rows()`, `records()` and `truncated()` on the result are shortcuts for that table; zero or multiple tables produce a clear error.
+- A table exposes `columns()` (`List<String>`), `rows()` (`List<List<String>>`, without headers), `records()` (`List<Map<String,String>>`) and `truncated()`. All values are strings; SQL `NULL` remains Java `null`. Convert numbers explicitly. Named records require unique, nonblank column labels; use SQL aliases or positional rows for duplicate labels. Lists and maps are immutable.
+- Every call executes the saved file again, including update statements, on a fresh connection that is closed afterwards. Unsaved editor drafts and previous editor results are excluded. Multi-statement/multi-result support follows the JDBC driver. No notebook JDBC dependency or manual connection setup is needed.
+- The SQL editor's source/result limits apply, including the explicit truncation flag and requested 60-second statement timeout. Java cells retain their overall 30-second execution limit. Loading failures appear as cell errors (`IOException`). Evaluating a result/table prints a compact summary; use `Grid` for a rich table.
+
+**Vibecode receives this API automatically** through `SqlContext`, even when preceding-cell context is disabled. Connection URLs and stored credentials are not part of that API context.
+
+### SQL table browser and Vibecode
+
+SQL files use a code-block layout with compact **Run**, **Vibecode**, **Undo AI edit**, **Connection settings**, **Table browser**, **Save**, **Find** and **Reload** actions at the top right. Settings and the table browser open in separate dialogs. After configuring a SQL file's JDBC connection, choose **Table browser** to list tables and views by catalog/schema. Filter by name, expand a table to inspect field names, database types, sizes and nullability, and use **Refresh schema** after schema changes. Up to 500 tables/views and 1,000 columns per table are supported.
+
+Choose **Vibecode** (or **Alt + Shift + V**) to open the same dialog used for Java cells: the selected SQL or whole-file target is shown above your instruction, with optional additional context, model information, live generation activity and diagnostics. Choose **Generate & apply** to apply the edit directly; **Cancel** discards pending responses. The model receives the database product/version, identifier quoting, table names and bounded column metadata automatically. It can request more column metadata and read sample rows using `sql_columns` and `sql_preview`. These structured tools accept a table index, never arbitrary SQL; previews use quoted metadata identifiers, request a read-only JDBC connection, and roll back the transaction. Previews contain at most 20 rows / 100 columns, truncate values to 200 characters and limit data to about 16,000 characters. Database structure and any requested samples are sent to the configured AI provider; connection URLs and stored credentials are excluded.
+
+Column context is bounded to the first 50 tables and about 60,000 characters, with truncation indicated; tools can inspect other listed tables. SQL generation uses the existing `AI_MODEL`, `AI_API_URL`, `AI_API_KEY`, timeout and tool-budget settings. Set `AI_TOOLS_ENABLED=true` to allow live inspection. **Generate & apply** replaces the selection captured when opening Vibecode, or the whole file when there was no selection. Edits remain bound to the original tab; changed source or connection settings require reopening Vibecode. Applied edits enter the normal undo history and remain unsaved until saved; **Undo AI edit** restores the previous source. Use **Run** to execute the statement.
+
+### AI edits for JSON, XML, YAML and text
+
+Choose **✦ AI** or press **Alt + Shift + V** in a JSON, XML or YAML file to open the shared AI dialog. Ask, for example, “Convert `sources/customers.csv` to JSON.” With `AI_TOOLS_ENABLED=true`, the model can list workspace folders and read saved UTF-8 files using `list_workspace_files` and `read_workspace_file`. Paths are relative to the configured data directory, including when the target file is in a subfolder. File reads are paginated and limited to files up to 2 MB; the tools do not write files. Unsaved source-file drafts are excluded.
+
+The replacement targets the selection captured when opening the dialog, or the whole file. **Generate & apply** updates the editor draft, with normal undo and **Undo AI edit** available; save to persist it. Cancelled requests and responses for changed targets are discarded. Text and Markdown files also offer the shared AI dialog. In notebook Markdown and raw text blocks, AI receives the same notebook settings, optional preceding cells/outputs, kernel and session tools as Java cells, while generating the block's own text format.
+
+### OpenAPI implementations in Java cells
+
+Open **Vibecode** in a Java code cell (**Alt + Shift + V**) and name a saved workspace specification or an HTTP(S) URL in your instruction. With `AI_TOOLS_ENABLED=true` (the default) and a tool-capable model, AI can load **OpenAPI 3.x / Swagger 2** specifications in **JSON or YAML** through `read_openapi_spec`, inspect operations and schemas, and generate reusable Java client code, interfaces or server snippets for the selected cell.
+
+Example instructions:
+
+- “Load `apis/petstore.yaml` and implement a Java client for `getPetById`. Use notebook variables for the base URL and API token.”
+- “Read `https://api.example.org/openapi.json` and implement the customer search endpoint with its query parameters, response types and error handling.”
+- “Use `apis/orders.json` to define a Java interface and DTOs for the order operations.”
+
+Java cells also receive the read-only workspace listing/file tools, so the model can locate specifications. Paths start at the configured data directory; save uploaded/edited specifications before generation. Large documents are read in pages or by JSON Pointer. Internal `$ref` targets can be inspected directly; external reference documents can be loaded explicitly relative to the originating document (the effective URL after redirects is returned). The model performs these lookups within the existing AI inspection budgets.
+
+Documents are limited to **2 MB each** and **8 documents per generation**, with a per-generation snapshot cache. YAML collection aliases are unsupported. Remote specifications must be accessible without authentication; HTTP requests use 5-second connection/read timeouts and follow at most 5 redirects. Specification sections inspected by the tools are sent to the configured AI provider. Generated Java uses the existing cell edit/undo workflow; run the cell to execute it.
+
+### Database inspection during Java AI generation
+
+With `AI_TOOLS_ENABLED=true`, Java-cell Vibecode can use `read_database` to inspect data before generating code. The model supplies `jdbcUrl`, `user`, `password` and `query` from your instruction or included context. PostgreSQL automatically uses `org.postgresql:postgresql:42.7.8`; an optional `maven` argument supplies another JDBC driver's `groupId:artifactId:version`.
+
+The tool accepts a single `SELECT` or `WITH` query, rejects write statements and writable CTEs, requests a read-only connection, and rolls back and closes each connection. Use an account with read-only database privileges, since JDBC read-only enforcement varies by driver and SQL functions can have side effects. Results include column labels, string values (SQL `NULL` remains null), and a truncation flag: at most 100 rows / 100 columns, 500 characters per value, and about 16,000 characters of data. A 15-second query timeout is requested.
+
+Connection details supplied in AI context and the returned query data are sent to the configured AI provider. The tool does not save credentials or include connection details in progress messages or error responses. Generated code is instructed to keep credentials configurable rather than embed secret values.
 
 ### In-app help and usage guide
 
@@ -117,7 +183,7 @@ The complete implemented shortcut reference and upstream sources are in **[KEYBO
 | Shift + Enter | Run cell and select the next cell |
 | Ctrl / Cmd + Enter | Run selected cell |
 | Alt + Enter | Run cell and insert a new one below |
-| Alt + Shift + V | Open Vibecode for the selected Java cell or selected editor text |
+| Alt + Shift + V | Open Vibecode for the selected Java/Markdown/text cell or supported file editor |
 | Escape / Enter | Command mode / edit mode |
 | J / K or ↓ / ↑ | Move between cells in command mode |
 | Shift + J / K or Shift + ↓ / ↑ | Extend cell selection |
@@ -170,7 +236,7 @@ String endpoint = requireLabVar("API_URL");
 String token = requireLabVar("API_TOKEN");
 ```
 
-The resolution order is **local value → environment variable → notebook default**. Definitions and non-secret defaults are saved in the `.jnb` file; local values are stored separately in `.java-lab-values` beside the configured data root (by default `{workingDir}/.java-lab-values`), with owner-only permissions where supported. Mark credentials as secret: they cannot have a notebook default, and their values are never returned by the settings API or included in a notebook download. You can also provide a value through the environment variable named in its definition before starting Java Lab.
+The resolution order is **local value → environment variable → notebook default**. Definitions and non-secret defaults are saved in the `.jnb` file; local values are stored separately in `~/.java-lab/notebook-values/`, associated with the absolute notebook path, with owner-only permissions where supported. Mark credentials as secret: they cannot have a notebook default, and their values are never returned by the settings API or included in a notebook download. You can also provide a value through the environment variable named in its definition before starting Java Lab.
 
 **Notebook code is trusted Java code, not a sandbox.** A cell can print a credential or include it in an output that gets saved or exported. Clear sensitive outputs before sharing a notebook; do not put secrets in code cells or defaults.
 
@@ -543,6 +609,7 @@ Vibecode always receives **`GridContext`** with the version, wrapper methods, da
 | `AI_API_KEY` | Provider API key, sent as a Bearer token when set | Empty; required by OpenRouter and authenticated providers |
 | `AI_MODEL` | Model ID accepted by the selected provider | Empty; must be set |
 | `AI_API_URL` | API base URL including its version/path prefix | `https://openrouter.ai/api/v1` |
+| `AI_OPENROUTER_PROVIDER_SORT` | OpenRouter provider priority: `throughput` (highest tokens/sec), `latency` (lowest time to first token), `price` (lowest price), or `default` (omit explicit sorting) | `throughput` |
 | `AI_TOOLS_ENABLED` | Allow the model to inspect the current notebook session and library APIs | `true`; requires a model/provider supporting Chat Completions tools |
 | `AI_TIMEOUT` | Overall generation timeout, including all model requests and tool rounds; accepts durations such as `300s` or `10m` | `300s` (5 minutes) |
 | `AI_MAX_TOKENS` | Maximum output tokens per model response | `128000` |
@@ -557,7 +624,9 @@ export AI_MODEL="openai/gpt-4.1"
 java -jar target/java-lab.jar
 ```
 
-With `AI_API_URL` unset or empty, these settings use OpenRouter. To use OpenAI directly:
+With `AI_API_URL` unset or empty, these settings use OpenRouter. OpenRouter requests prefer the fastest providers by output throughput (`provider.sort=throughput`), including subsequent tool and correction requests. Set `AI_OPENROUTER_PROVIDER_SORT=latency` to prioritize response latency, `price` to prioritize cost, or `default` to use OpenRouter's normal routing. Unset or empty values use `throughput`. This setting applies only to OpenRouter.
+
+To use OpenAI directly:
 
 ```sh
 export AI_API_URL="https://api.openai.com/v1"
